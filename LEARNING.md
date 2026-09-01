@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (9 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine)
+- **M1 — Auth & CRUD** (10 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -138,6 +138,18 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** order the checks deliberately — (1) not found → 404, (2) not participant → 403, (3) already-cancelled → no-op 200, (4) terminal/illegal state → 409, (5) else transition + commit. Return the eager-loaded current state so clients converge on truth.
 - **Interview answer:** *"A stateful endpoint like cancel is a tiny state machine: I authorize at the boundary (only participants), guard the transition (completed records are immutable), and honor HTTP semantics (cancel is idempotent, so repeating it is a 200 no-op, while an illegal transition is a 409). The distinction matters for retry-safe clients: idempotency is about repeated requests mapping to the same effect, not about which transitions exist."*
 - **Trap to avoid:** "Everyone logged in can cancel — auth middleware got them to the route." Authentication ≠ authorization; and "idempotent means always return 200" is wrong — it means repeated requests converge on one state.
+
+### `2026-09-02 · M1` — records CRUD: ownership on sensitive data + PATCH semantics
+
+- **What we did:** `medical_records` table (migration `4304e911c43b`) + full CRUD. **Naive**: any authenticated user GETs any record; PATCH applies `model_dump()` (missing fields → `None`) so a title-only edit wipes notes; DELETE ungated (any participant). Observed with `scripts/observe_records.py`, then fixed, then Bruno `Protected/Records/*`.
+- **Observed (naive):** patient B reads patient A's record → **200 leak**; `PATCH {title}` sets `notes=None` → **NOT NULL violation → 500** (would silently erase on a nullable column); patient A's DELETE → **204** on doctor's record; patient A's PATCH → **500** (granted, then crashed).
+- **Observed (fixed):** stranger read → **403** `RECORD_ACCESS_DENIED`; PATCH title-only → 200 with notes **preserved**; patient PATCH/DELETE → **403**; creator DELETE → 204; POST-delete GET → 404.
+- **Lesson 1 — PATCH vs PUT:** PUT = replace the whole resource — every field must be provided, omitted means "back to default/empty". PATCH = partial modification — omitted fields mean "leave alone". `payload.model_dump(exclude_unset=True)` is the idiom: only keys that were actually in the request body survive, so defaults (our `None`s) never get written. Shipping a "PATCH" that behaves like PUT is a data-loss bug that here surfaced as a 500 only because the column was NOT NULL — on nullable columns it silently destroys data.
+- **Lesson 2 — ownership, twice:** "authenticated" ≠ "entitled". Medical data is the canonical least-privilege case: reads scoped to the two parties on the record (`patient_id OR doctor_id`), writes scoped to the creator (`doctor_id == me`). Enforce at the handler (data-level), never assume the route prefix protects you. Distinct error `RECORD_ACCESS_DENIED` (403) vs `RECORD_NOT_FOUND` (404) — do not hide 404s as 403 (don't leak existence) or vice versa (must reveal intent for debugging).
+- **Ops bonus discovered en route:** the envelope's unhandled-exception handler swallowed 500s with **zero server-side trace** — a silent failure in prod. Fixed: `logging.getLogger("uvicorn.error").exception(...)` before returning. Lesson: a sanitized client error is fine, but *never* let the server log be silent too.
+- **Fix / best practice:** single `_load()` (404 + eager participants) reused by all handlers; `_response()` refresh after commit; 204 empty-body DELETE (REST, no envelope — body-less by definition). Creator-check before mutate; read-check before view.
+- **Interview answer:** *"PATCH and PUT differ in intent: PUT replaces the whole resource, PATCH mutates only the fields the client sent. I implement the latter with model_dump(exclude_unset=True) so defaults never clobber stored data, and I scope sensitive-data endpoints by data-level ownership — reads for the parties on the record, writes for the creator — because authentication proves who you are, not what you may see."*
+- **Trap to avoid:** `model_dump()` without `exclude_unset` in a PATCH handler ("looks fine, tests pass, wipes on real use"), or treating "must be logged in" as sufficient for sensitive reads.
 
 ### `2026-09-01 · M1` — appointments CRUD: N+1 queries + pagination
 
