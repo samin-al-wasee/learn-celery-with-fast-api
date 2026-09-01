@@ -44,7 +44,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Appointments CRUD slice:** migration `e30a4c8a53e0` + `POST /appointments` (role-based booking) + naive `GET` (1+N) observed **601 execs/388ms → fixed** pagination + `selectinload` (~4 execs/7ms) + `meta.pagination` — verified live
 - [x] **Appointment cancel slice:** naive (no authz/transitions) → fixed: participant-only 403, COMPLETED 409, idempotent 200 no-op, + status filter — verified live
 - [x] **Medical records CRUD slice:** naive (leaky GET, wiping PATCH, ungated DELETE) → fixed: ownership reads (403 RECORD_ACCESS_DENIED), creator-only writes, PATCH `exclude_unset` partial semantics, 204 DELETE + silent-500 logging fix — verified live
-- [ ] Appointment update/confirm + profiles CRUD (next slices)
+- [x] **Appointment update/confirm + profiles CRUD slice:** naive (patient confirm, past reschedule, terminal edits, patient specialty) → fixed: doctor-only 403 confirm, future-only 400, terminal 409, role-aware profile 403; `users.phone` migration; `PATCH /users/me` — verified live. (Validation hardening = next slice)
 - [ ] Deeper Pydantic validation on CRUD payloads (dates, ranges, role-specific fields)
 - [x] LEARNING.md log + interview section for "cancel state machine / idempotency" — ✔ entry added
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
@@ -174,3 +174,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-01 | M1 | Appointments CRUD slice: migration + booking + naive 1+N list (601 execs/388ms) → pagination + selectinload (~4/7ms) + meta.pagination | ✅ |
 | 2026-09-01 | M1 | Appointment cancel: naive (no authz/transitions) → participant 403 / completed 409 / idempotent 200 + status filter | ✅ |
 | 2026-09-02 | M1 | Records CRUD: naive (leaky GET, wiping PATCH, ungated DELETE) → ownership 403s, PATCH exclude_unset, 204 DELETE, silent-500 logging fix | ✅ |
+| 2026-09-02 | M1 | Appointment update/confirm + profiles CRUD: naive (patient confirm/past reschedule/terminal edits/patient specialty) → doctor-only 403, future 400, terminal 409, role-aware specialty; users.phone migration | ✅ |

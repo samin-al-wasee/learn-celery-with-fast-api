@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (10 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch)
+- **M1 — Auth & CRUD** (11 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -161,6 +161,17 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** `select(Appointment).options(selectinload(...)).where(owned).order_by(...).limit().offset()` + a `func.count()` for total; participants loaded in bulk and rendered from the relationship attributes; owner scoping (`patient_id=me OR doctor_id=me`) is the authz line.
 - **Interview answer:** *"List endpoints get pagination and eager loading. The naive thing — fetch the page, then load the related doctor and patient per row — turns one request into 1+N round trips; with an async schema it can't even do that silently. `selectinload` fetches whole collections in bulk, and `limit/offset` bounds the result; I expose that in `meta: {pagination}`. The trap underneath is the identity map hiding the problem when participants repeat."*
 - **Trap to avoid:** "It's fast in my dev DB so it's fine" — dev data is tiny; N+1 and unbounded lists are the two things that produce the p95 cliff under load. Also: fixing N+1 by loading *everything* "just in case" — paginate first, eager-load only what the page renders.
+
+### `2026-09-02 · M1` — appointment update/confirm + profiles: transitions, role-aware profile fields
+
+- **What we did:** `PATCH /appointments/{id}` (confirm / reschedule / edit reason) and `PATCH /users/me` (profile CRUD now complete: GET existed, this adds update). Added `users.phone` (migration `6e435f95a96a`). **Naive:** any participant confirmed/applied any transition, past reschedules accepted, terminal records editable; patients set `specialty`. Observed with `scripts/observe_update_confirm.py`, then fixed.
+- **Observed (naive):** patient confirms own appointment → **200**; doctor reschedules to a past time → **200**; reason edit on a COMPLETED record → **200**; patient `PATCH /users/me {specialty}` → **200** with the field set; garbage phone → already **422** (schema-level `pattern` caught it even before the fix).
+- **Observed (fixed):** patient confirm → **403** `FORBIDDEN`; past reschedule → **400** `PAST_SCHEDULED_AT`; terminal-state edit → **409** `INVALID_TRANSITION`; patient specialty → **403**; valid E.164 phone → 200.
+- **Lesson 1 — the state machine generalizes:** the same three questions as cancel — *who* (participant authz, plus doctor-only for confirm), *from which states* (PENDING→CONFIRMED only; CANCELLED/COMPLETED immutable for everything — 409), *repeated?* (re-confirming a confirmed appointment is a no-op 200, mirroring cancel's idempotency). A resource with state is a tiny state machine; encode the transitions in one place, not per-endpoint improvisation.
+- **Lesson 2 — validate shape at the boundary, validate *entitlement* in the handler:** `phone` format and `status ∈ {confirmed}` are data facts → Pydantic (`pattern`, `Literal`) rejects them at 422 with zero handler code. `specialty` is a *role* fact → the handler checks `current_user.role` and answers 403. Mixing the two layers is the classic bug: doing access control with 422 validation, or validating business rules in the handler with raw `if`s.
+- **Fix / best practice:** `AppointmentUpdate` uses `exclude_unset` (only sent fields), `Literal` for the one legal status value; participants check first, then per-field guards (role, transition table, `future` on reschedule). Profile: `ProfileResponse` now returns `specialty`/`phone`; schema enforces E.164 pattern; role guard for specialty.
+- **Interview answer:** *"An update endpoint on a stateful resource is a transition: I authorize who's allowed, restrict which states it can run from, and treat repeats as idempotent no-ops. Data-format rules (phone E.164, allowed enum values) live in the schema so they 422 at the boundary; entitlement rules (doctor-only specialty, doctor-only confirm) live in the handler as 403s — mixing the two layers causes exactly the 'why is my validation also my authz' confusion."*
+- **Trap to avoid:** giving PATCH free rein on a resource that has a lifecycle — you'll rewrite history — and putting role checks into Pydantic (schema can't see who's asking).
 
 ---
 
