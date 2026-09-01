@@ -32,6 +32,9 @@ Test every endpoint of the Cardicheck API from Bruno.
      the email was consumed). Variable lifecycle: each signup captures the
      email only on success, and login empties it again on success.
   3. Any `Protected/...` request inherits the bearer token and just works.
+     `Protected/Appointments/*` additionally needs the captured participant
+     ids: `Signup Patient` sets `signup_patient_id` (and `Signup Doctor` sets
+     `signup_doctor_id`), which `Create Appointment` uses.
   Run `Login` again whenever the token expires (the demo JWT lives 60 min).
 - URLs use `{{baseUrl}}` so the collection is portable (local/CI/prod).
 - **Dynamic data by default:** bodies use Bruno's built-in faker-backed

@@ -1,0 +1,31 @@
+meta {
+  name: Create Appointment
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/appointments
+  body: json
+  auth: inherit
+}
+
+script:pre-request {
+  const d = new Date(Date.now() + 60 * 60 * 1000);
+  bru.setVar('appt_at', d.toISOString());
+}
+
+body:json {
+  {
+    "patient_id": {{signup_patient_id}},
+    "scheduled_at": "{{appt_at}}",
+    "reason": "Follow-up on blood pressure"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body: contains "data"
+  res.body: contains "pending"
+  res.body: contains "scheduled_at"
+}

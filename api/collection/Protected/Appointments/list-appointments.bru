@@ -1,0 +1,18 @@
+meta {
+  name: List Appointments
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/appointments?page=1&per_page=20
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "data"
+  res.body: contains "pagination"
+  res.body: contains "scheduled_at"
+}

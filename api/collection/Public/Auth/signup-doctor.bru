@@ -24,6 +24,7 @@ script:post-response {
   if (res.status !== 201) return;
   const data = res.getBody();
   bru.setVar('signup_email', data.email);
+  bru.setVar('signup_doctor_id', data.id);
 }
 
 assert {
