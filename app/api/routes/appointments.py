@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from math import ceil
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user
 from app.core.database import get_db_session
@@ -18,14 +20,11 @@ def _brief(user: User) -> UserBrief:
     return UserBrief(id=user.id, full_name=user.full_name, role=user.role.value)
 
 
-async def _appointment_response(db: AsyncSession, appt: Appointment) -> AppointmentResponse:
-    # NAIVE: 1+N — fetch both participants with their own query per row.
-    patient = await db.get(User, appt.patient_id)
-    doctor = await db.get(User, appt.doctor_id)
+def _response(appt: Appointment) -> AppointmentResponse:
     return AppointmentResponse(
         id=appt.id,
-        patient=_brief(patient),
-        doctor=_brief(doctor),
+        patient=_brief(appt.patient),
+        doctor=_brief(appt.doctor),
         scheduled_at=appt.scheduled_at,
         status=appt.status,
         reason=appt.reason,
@@ -80,22 +79,47 @@ async def create_appointment(
     db.add(appt)
     await db.commit()
     await db.refresh(appt)
-    response = await _appointment_response(db, appt)
-    return ApiResponse(data=response)
+    return ApiResponse(data=_response(appt))
 
 
 @router.get("", response_model=ApiResponse[list[AppointmentResponse]])
 async def list_appointments(
+    page: int = 1,
+    per_page: int = 20,
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[list[AppointmentResponse]]:
-    # NAIVE: unbounded result set + 1+N per row (see scripts/observe_n_plus_1.py).
+    # Fixed: paginate + selectinload both participants in bulk (no 1+N).
+    page = max(page, 1)
+    per_page = min(max(per_page, 1), 100)
+    owned = or_(
+        Appointment.patient_id == current_user.id,
+        Appointment.doctor_id == current_user.id,
+    )
+    total = (
+        await db.execute(
+            select(func.count()).select_from(Appointment).where(owned)
+        )
+    ).scalar_one()
     rows = (
         await db.execute(
             select(Appointment)
-            .where(or_(Appointment.patient_id == current_user.id, Appointment.doctor_id == current_user.id))
+            .options(selectinload(Appointment.patient), selectinload(Appointment.doctor))
+            .where(owned)
             .order_by(Appointment.scheduled_at.desc())
+            .limit(per_page)
+            .offset((page - 1) * per_page)
         )
     ).scalars()
-    appts = [await _appointment_response(db, appt) for appt in rows]
-    return ApiResponse(data=appts)
+    data = [_response(appt) for appt in rows]
+    return ApiResponse(
+        data=data,
+        meta={
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": ceil(total / per_page),
+            }
+        },
+    )
