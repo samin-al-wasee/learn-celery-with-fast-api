@@ -39,8 +39,10 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Fix:** `run_in_threadpool` for hash/verify — loop free during burst (probe ~23ms), honest: argon2 still ~1.4x parallel
 - [x] JWT: minimal claims (`sub`/`iat`/`exp`, HS256), env secret, `get_current_user` re-reads user from DB, protected `GET /users/me`
 - [x] Bruno flow: signup → login → me (chained vars) — verified live
+- [x] **Envelope + error handling:** one response shape (data/meta/error + stable codes 409/401/422/404/500) via `ApiResponse[T]` + centralized handlers; all endpoints + Bruno asserts updated — verified live
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
-- [ ] Pydantic validation, consistent response envelope, error handling
+- [ ] Deeper Pydantic validation on CRUD payloads (dates, ranges, role-specific fields)
+- [x] LEARNING.md log + interview section for "envelope + error handling" — ✔ entry added
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
 - [x] LEARNING.md log + interview section for "cpu-bound work off the loop (argon2 + threadpool)" — ✔ entry added
 
@@ -163,3 +165,5 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-01 | M1 | naive signup (sync session + sleep) → observed probe blocked ~1085ms → `AsyncSession` DI | ✅ |
 | 2026-09-01 | M1 | Bruno collection: health + signup (dynamic vars) | ✅ |
 | 2026-09-01 | M1 | Login + JWT: naive argon2-in-loop → observed CPU burst ~413ms/8 → threadpool fix + `GET /users/me` + Bruno flow | ✅ |
+| 2026-09-01 | M1 | Bruno auth roots: Public (no auth) vs Protected (inherited bearer) + var lifecycle | ✅ |
+| 2026-09-01 | M1 | Response envelope + centralized exception handlers (409/401/422/404/500) — all endpoints + Bruno asserts updated | ✅ |

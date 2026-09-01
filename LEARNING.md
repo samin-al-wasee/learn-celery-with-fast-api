@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (5 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots)
+- **M1 — Auth & CRUD** (6 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -107,6 +107,16 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"I treat the API test collection as a reproducible contract: auth is configured once at the folder root and inherited by every nested request — public and protected endpoints are physically separated. One login example sets the token variable that the whole protected tree consumes, so onboarding a new endpoint is 'drop a file in the folder, it's already authenticated'."*
 - **Trap to avoid:** duplicating `Authorization` headers/tokens per request — it rots fast (stale token values, forgotten audits) and gives reviewers the illusion that auth is per-route instead of per-boundary.
 - **Amendments:** chain vars follow an explicit lifecycle — `access_token` is cleared pre-login and populated only on a 200; `signup_email` is captured on a 201 signup and **cleared again when login succeeds (it's consumed)**. Exactly one "writer" and one "consumer" per variable → no stale fixtures across runs; Bruno kept re-pinning `vars:pre-request { signup_email }` (its request-variable panel) which must not come back.
+
+### `2026-09-01 · M1` — response envelope + centralized error handling
+
+- **What we did:** Introduced a single contract: success `{"data": ..., "meta": {}, "error": null}`, failure `{"data": null, "error": {"code", "message", "details"}, "meta": {}}`. Added `ApiResponse[T]` (Pydantic generic), `CardicheckError` domain exception, and one handler per class registered once in `app/core/errors.register_exception_handlers`: domain errors, Starlette `HTTPException` (covers 401/404/405), FastAPI's `RequestValidationError` (422), and a catch-all `Exception` (500, detail only when `settings.debug`). Migrated health/signup/login/users/me; Bruno asserts now check envelope keys.
+- **Observed (before — 5 shapes on one API):** dup signup → `{"detail": ...}`; bad login → 401 `detail`; validation → FastAPI's `{"detail": [{type,loc,msg,ctx}]}`; unknown route → `{"detail":"Not Found"}`; unhandled → plain text `500`. No machine-readable code anywhere; clients had to special-case every route.
+- **Observed (after — one shape):** all six probes now `{data,error,meta}`; `EMAIL_ALREADY_REGISTERED`, `INVALID_CREDENTIALS`, `VALIDATION_ERROR`, `NOT_FOUND` carry stable codes; 500 is sanitized (no stack/HTML leak in prod).
+- **Lesson:** responses ARE the API's public surface — if each endpoint invents its own shape, the "API" is really N micro-APIs. Errors are a contract too: a `code` (stable, machine-parseable) + `message` (human) + `details` (structured context) beats freeform text. Centralize via exception handlers so routes return happy-path values and *raise* honestly.
+- **Fix / best practice:** one generic `ApiResponse[T]`; domain code raises `CardicheckError(status, code, message, details)`; `register_exception_handlers` in `main.py` maps every failure path to the same envelope, including foreign classes (FastAPI 422, Starlette 404). `settings.debug` decides how much of a 500 leaks.
+- **Interview answer:** *"I define one response envelope — success data plus an error object with a stable code, human message, and structured details — and enforce it at the edges with FastAPI exception handlers, so route handlers stay clean and every failure path (validation, not-found, domain conflicts, crashes) serializes identically. Codes, not freeform 'detail' strings, are the machine contract; messages are for humans."*
+- **Trap to avoid:** "Errors are fine as `{'detail': '...'}`" — with that, upgrading any client or adding an SDK means touching every endpoint; and leaking raw `str(exc)` to clients in prod is a security hole, not a convenience.
 
 ---
 
