@@ -23,5 +23,4 @@ Test every endpoint of the Cardicheck API from Bruno.
   run by editing the body, or force a prompt with a prompt variable
   (`{{?email}}`).
 - **Rule:** no endpoint ships without its Bruno example — see `AGENTS.md`.
-- Environments are stored in Bruno's config, **not** committed to this repo:
-  only `bruno.json` + `.bru` files live here.
+- The dev environment (`environments/Development.bru` with `baseUrl=http://localhost:8000`) is committed for convenience. Secrets (auth tokens, prod URLs) go in **local environments** which stay out of the repo — never commit a real token.
