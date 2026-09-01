@@ -10,7 +10,12 @@ from app.api.deps import get_current_user
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
 from app.models import Appointment, AppointmentStatus, User, UserRole
-from app.schemas.appointments import AppointmentCreate, AppointmentResponse, UserBrief
+from app.schemas.appointments import (
+    AppointmentCreate,
+    AppointmentResponse,
+    AppointmentUpdate,
+    UserBrief,
+)
 from app.schemas.envelope import ApiResponse
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -176,4 +181,27 @@ async def cancel_appointment(
     appt.status = AppointmentStatus.CANCELLED
     await db.commit()
     await db.refresh(appt)
+    return ApiResponse(data=_response(appt))
+
+
+@router.patch("/{appointment_id}", response_model=ApiResponse[AppointmentResponse])
+async def update_appointment(
+    appointment_id: int,
+    payload: AppointmentUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[AppointmentResponse]:
+    # NAIVE (see scripts/observe_update_confirm.py): any participant may confirm,
+    # reschedule into the past, or edit records in terminal states.
+    appt = await _get_appointment(db, appointment_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if "status" in updates:
+        appt.status = updates["status"]
+    if "scheduled_at" in updates:
+        appt.scheduled_at = updates["scheduled_at"]
+    if "reason" in updates:
+        appt.reason = updates["reason"]
+    if updates:
+        await db.commit()
+        await db.refresh(appt)
     return ApiResponse(data=_response(appt))

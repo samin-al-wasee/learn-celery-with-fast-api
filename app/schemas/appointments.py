@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -18,6 +19,15 @@ class AppointmentCreate(BaseModel):
         if (self.doctor_id is None) == (self.patient_id is None):
             raise ValueError("exactly one of doctor_id (as patient) or patient_id (as doctor) is required")
         return self
+
+
+class AppointmentUpdate(BaseModel):
+    """PATCH semantics: only sent fields are applied; status accepts only
+    \"confirmed\" (cancellation is its own idempotent endpoint)."""
+
+    status: Literal[AppointmentStatus.CONFIRMED] | None = None
+    scheduled_at: datetime | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class UserBrief(BaseModel):
