@@ -106,6 +106,7 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** two roots — `Public/` (folder-level `none`) and `Protected/` (folder-level bearer); nested request files under `Protected/` declare only what's theirs; one auth-mutation point (login) writes the collection variable every other request reads. Rule codified in `AGENTS.md` §5 so future endpoints follow it automatically.
 - **Interview answer:** *"I treat the API test collection as a reproducible contract: auth is configured once at the folder root and inherited by every nested request — public and protected endpoints are physically separated. One login example sets the token variable that the whole protected tree consumes, so onboarding a new endpoint is 'drop a file in the folder, it's already authenticated'."*
 - **Trap to avoid:** duplicating `Authorization` headers/tokens per request — it rots fast (stale token values, forgotten audits) and gives reviewers the illusion that auth is per-route instead of per-boundary.
+- **Amendments:** chain vars follow an explicit lifecycle — `access_token` is cleared pre-login and populated only on a 200; `signup_email` is captured on a 201 signup and **cleared again when login succeeds (it's consumed)**. Exactly one "writer" and one "consumer" per variable → no stale fixtures across runs; Bruno kept re-pinning `vars:pre-request { signup_email }` (its request-variable panel) which must not come back.
 
 ---
 
