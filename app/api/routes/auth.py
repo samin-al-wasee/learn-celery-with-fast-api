@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db_session
 from app.core.security import create_access_token, hash_password, verify_password
@@ -22,7 +23,7 @@ async def signup(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email already registered")
     user = User(
         email=str(payload.email),
-        hashed_password=hash_password(payload.password),
+        hashed_password=await run_in_threadpool(hash_password, payload.password),
         full_name=payload.full_name,
         role=payload.role,
         specialty=payload.specialty,
@@ -34,15 +35,18 @@ async def signup(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login_naive(
+async def login(
     payload: LoginRequest,
     db: AsyncSession = Depends(get_db_session),
 ) -> TokenResponse:
-    # NAIVE (deliberate, see LEARNING.md M1): argon2 verification runs IN the event
-    # loop. ~30ms of pure CPU per attempt stalls every concurrent request.
+    # argon2 is deliberately CPU-slow (~30ms per verify); running it on the
+    # event loop stalls every concurrent request. Delegate to the threadpool.
     user = (
         await db.execute(select(User).where(User.email == payload.email))
     ).scalar_one_or_none()
-    if user is None or not verify_password(payload.password, user.hashed_password):
+    ok = user is not None and await run_in_threadpool(
+        verify_password, payload.password, user.hashed_password
+    )
+    if not ok:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid email or password")
     return TokenResponse(access_token=create_access_token(user.id))
