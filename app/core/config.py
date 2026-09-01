@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://cardicheck:cardicheck@localhost:5432/cardicheck"
 
+    # DEV-ONLY fallback; never ship a real secret as a default.
+    jwt_secret: str = "dev-secret-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
