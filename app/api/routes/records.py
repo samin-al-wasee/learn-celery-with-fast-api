@@ -120,8 +120,13 @@ async def get_record(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[RecordResponse]:
-    # NAIVE: any authenticated user reads any record (no ownership check).
     record = await _load(db, record_id)
+    if current_user.id not in (record.patient_id, record.doctor_id):
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="RECORD_ACCESS_DENIED",
+            message="you are not a party to this record",
+        )
     return ApiResponse(data=_response(record))
 
 
@@ -132,12 +137,22 @@ async def update_record(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[RecordResponse]:
-    # NAIVE: model_dump() includes None for missing fields -> PATCH wipes them.
     record = await _load(db, record_id)
-    for field, value in payload.model_dump().items():
+    if record.doctor_id != current_user.id:
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="RECORD_ACCESS_DENIED",
+            message="only the creating doctor may edit a record",
+        )
+    # PATCH semantics: apply ONLY the fields the client actually sent.
+    # model_dump(exclude_unset=True) skips everything with a default (None),
+    # so a title-only PATCH cannot null out notes.
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
         setattr(record, field, value)
-    await db.commit()
-    await db.refresh(record)
+    if updates:
+        await db.commit()
+        await db.refresh(record)
     return ApiResponse(data=_response(record))
 
 
@@ -147,8 +162,13 @@ async def delete_record(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    # NAIVE: no creator check — any participant deletes.
     record = await _load(db, record_id)
+    if record.doctor_id != current_user.id:
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="RECORD_ACCESS_DENIED",
+            message="only the creating doctor may delete a record",
+        )
     await db.delete(record)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
