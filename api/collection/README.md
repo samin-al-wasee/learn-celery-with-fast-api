@@ -25,8 +25,9 @@ Test every endpoint of the Cardicheck API from Bruno.
 - One `.bru` file per example; folder layout mirrors the API surface
   (`Public/Health/`, `Public/Auth/`, `Protected/Users/`, ...).
 - **Auth flow (auto-set token):**
-  1. `Public/Auth/Signup Doctor` (or Patient) → on **201** its post-response
-     sets `signup_email`.
+  1. `Public/Auth/Signup Patient` and `Signup Doctor` → on **201** both set
+     `signup_email` (last run wins — the appointments flow expects the doctor
+     last) plus their own id (`signup_patient_id` / `signup_doctor_id`).
   2. `Public/Auth/Login` (no auth) → on **200** its post-response sets
      `access_token` and **clears `signup_email`** (the account now exists —
      the email was consumed). Variable lifecycle: each signup captures the

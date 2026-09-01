@@ -1,7 +1,7 @@
 meta {
   name: Signup Patient
   type: http
-  seq: 2
+  seq: 1
 }
 
 post {
@@ -29,5 +29,6 @@ assert {
 script:post-response {
   if (res.status !== 201) return;
   const data = res.getBody().data;
+  bru.setVar('signup_email', data.email);
   bru.setVar('signup_patient_id', data.id);
 }
