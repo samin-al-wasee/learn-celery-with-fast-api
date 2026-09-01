@@ -191,16 +191,58 @@ async def update_appointment(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[AppointmentResponse]:
-    # NAIVE (see scripts/observe_update_confirm.py): any participant may confirm,
-    # reschedule into the past, or edit records in terminal states.
     appt = await _get_appointment(db, appointment_id)
+
+    # Authz: participants only.
+    if current_user.id not in (appt.patient_id, appt.doctor_id):
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="NOT_PARTICIPANT",
+            message="only participants may update this appointment",
+        )
+
     updates = payload.model_dump(exclude_unset=True)
+    terminal = appt.status in (AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED)
+
+    # Status transitions: doctor-only, PENDING -> CONFIRMED; re-confirm is a no-op
+    # (idempotent), anything from a terminal/other state is a conflict.
     if "status" in updates:
-        appt.status = updates["status"]
+        if current_user.role != UserRole.DOCTOR:
+            raise CardicheckError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="FORBIDDEN",
+                message="only the doctor may confirm an appointment",
+            )
+        if appt.status == AppointmentStatus.CONFIRMED:
+            pass
+        elif appt.status != AppointmentStatus.PENDING:
+            raise CardicheckError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="INVALID_TRANSITION",
+                message="only pending appointments can be confirmed",
+            )
+        else:
+            appt.status = AppointmentStatus.CONFIRMED
+
+    # Terminal states are immutable for data fields too.
+    if ("scheduled_at" in updates or "reason" in updates) and terminal:
+        raise CardicheckError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="INVALID_TRANSITION",
+            message="cancelled or completed appointments cannot be rescheduled or edited",
+        )
+
     if "scheduled_at" in updates:
+        if updates["scheduled_at"] <= datetime.now(timezone.utc):
+            raise CardicheckError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="PAST_SCHEDULED_AT",
+                message="scheduled_at must be in the future",
+            )
         appt.scheduled_at = updates["scheduled_at"]
     if "reason" in updates:
         appt.reason = updates["reason"]
+
     if updates:
         await db.commit()
         await db.refresh(appt)
