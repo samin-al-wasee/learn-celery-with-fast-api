@@ -21,6 +21,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(150))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), index=True)
     specialty: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
