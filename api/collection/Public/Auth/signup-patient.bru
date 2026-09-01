@@ -28,6 +28,6 @@ assert {
 
 script:post-response {
   if (res.status !== 201) return;
-  const data = res.getBody();
+  const data = res.getBody().data;
   bru.setVar('signup_patient_id', data.id);
 }
