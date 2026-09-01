@@ -21,6 +21,7 @@ body:json {
 
 assert {
   res.status: eq 201
+  res.body: contains "data"
   res.body: contains "id"
   res.body: contains "patient"
 }
