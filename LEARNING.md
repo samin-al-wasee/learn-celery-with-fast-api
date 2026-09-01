@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (8 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness)
+- **M1 — Auth & CRUD** (9 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -127,6 +127,17 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** update Bruno in the same increment as the code that changes the contract; consciously re-check BOTH asserts and post-response `res.getBody().data` extraction; run the affected examples / observe scripts as part of the merge checklist.
 - **Interview answer:** *"Our API test collection is versioned and lives with the code. When a response shape changes, I update the matching Bruno examples in the same commit — because a stale example is a broken client contract, not a cosmetic doc. The tricky part is that asserts do text matching, so they can pass while variable-capture scripts silently break; I re-check both and re-run the affected requests before merging."*
 - **Trap to avoid:** "The asserts still pass, so we're fine." — asserts and scripts have complementary blind spots; a change that passes all asserts can still ship a broken collection.
+
+### `2026-09-01 · M1` — appointment cancel: authz, state transitions, idempotency
+
+- **What we did:** Added `POST /appointments/{id}/cancel` **naive** (find → set CANCELLED → 200), observed the holes with `scripts/observe_cancel.py`, then fixed: participant-only authz (403 `NOT_PARTICIPANT`), explicit transition guard (COMPLETED → 409 `INVALID_TRANSITION`), and idempotent no-op for already-cancelled (200 returning current state). Also added a `status` filter to the list endpoint.
+- **Observed (naive):** stranger with a valid token cancels the owner's appointment → **200**; cancelling a COMPLETED past visit → **200** (rewrites history); double-cancel → blind 200 with nothing that distinguishes "still cancelled" from a fresh transition.
+- **Observed (fixed):** stranger → **403**; completed → **409**; owner → 200; owner again → 200 idempotent no-op (state unchanged).
+- **Lesson 1 — every stateful write needs three questions answered at the edge:** Who may do it? (authz — participant check, not "is authenticated") From which states is it legal? (transition map — not any-state-any-time) What if repeated? (HTTP semantics — cancel is idempotent, so repeat = no-op success; a *different* invalid transition = 409 conflict).
+- **Lesson 2 — idempotency vs conflict:** idempotency says "same request, same effect" — cancelling a cancelled appointment is the *same effect* (it stays cancelled) so 200 no-op is correct; returning 409 would break retry-safe clients. But COMPLETED→CANCELLED is a *different* target, so 409. Idempotency is about repeated requests, not about which transitions exist.
+- **Fix / best practice:** order the checks deliberately — (1) not found → 404, (2) not participant → 403, (3) already-cancelled → no-op 200, (4) terminal/illegal state → 409, (5) else transition + commit. Return the eager-loaded current state so clients converge on truth.
+- **Interview answer:** *"A stateful endpoint like cancel is a tiny state machine: I authorize at the boundary (only participants), guard the transition (completed records are immutable), and honor HTTP semantics (cancel is idempotent, so repeating it is a 200 no-op, while an illegal transition is a 409). The distinction matters for retry-safe clients: idempotency is about repeated requests mapping to the same effect, not about which transitions exist."*
+- **Trap to avoid:** "Everyone logged in can cancel — auth middleware got them to the route." Authentication ≠ authorization; and "idempotent means always return 200" is wrong — it means repeated requests converge on one state.
 
 ### `2026-09-01 · M1` — appointments CRUD: N+1 queries + pagination
 

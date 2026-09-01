@@ -42,9 +42,10 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Envelope + error handling:** one response shape (data/meta/error + stable codes 409/401/422/404/500) via `ApiResponse[T]` + centralized handlers; all endpoints + Bruno asserts updated — verified live
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
 - [x] **Appointments CRUD slice:** migration `e30a4c8a53e0` + `POST /appointments` (role-based booking) + naive `GET` (1+N) observed **601 execs/388ms → fixed** pagination + `selectinload` (~4 execs/7ms) + `meta.pagination` — verified live
-- [ ] Appointments update/cancel + records + profiles CRUD (next slices)
+- [x] **Appointment cancel slice:** naive (no authz/transitions) → fixed: participant-only 403, COMPLETED 409, idempotent 200 no-op, + status filter — verified live
+- [ ] Appointment update/confirm + records + profiles CRUD (next slices)
 - [ ] Deeper Pydantic validation on CRUD payloads (dates, ranges, role-specific fields)
-- [x] LEARNING.md log + interview section for "N+1 + pagination" — ✔ entry added
+- [x] LEARNING.md log + interview section for "cancel state machine / idempotency" — ✔ entry added
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
 - [x] LEARNING.md log + interview section for "cpu-bound work off the loop (argon2 + threadpool)" — ✔ entry added
 
@@ -170,3 +171,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-01 | M1 | Bruno auth roots: Public (no auth) vs Protected (inherited bearer) + var lifecycle | ✅ |
 | 2026-09-01 | M1 | Response envelope + centralized exception handlers (409/401/422/404/500) — all endpoints + Bruno asserts updated | ✅ |
 | 2026-09-01 | M1 | Appointments CRUD slice: migration + booking + naive 1+N list (601 execs/388ms) → pagination + selectinload (~4/7ms) + meta.pagination | ✅ |
+| 2026-09-01 | M1 | Appointment cancel: naive (no authz/transitions) → participant 403 / completed 409 / idempotent 200 + status filter | ✅ |
