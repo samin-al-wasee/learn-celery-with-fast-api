@@ -1,0 +1,17 @@
+meta {
+  name: Get Record
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/records/{{record_id}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "data"
+  res.body: contains "Initial Consult"
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Patch Record
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/records/{{record_id}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  title: Updated Title
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "Updated Title"
+  res.body: contains "steady chest pain"
+}

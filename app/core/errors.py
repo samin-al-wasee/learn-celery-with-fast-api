@@ -1,5 +1,7 @@
 from typing import Any
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -60,6 +62,9 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def on_unhandled_error(_request, exc: Exception) -> JSONResponse:
+        # Never call the log silent: debug mode leaks the message to the client,
+        # but prod must still trace the failure server-side.
+        logging.getLogger("uvicorn.error").exception("unhandled error", exc_info=exc)
         settings = get_settings()
         message = str(exc) if settings.debug else "internal server error"
         return JSONResponse(status_code=500, content=_error_body("INTERNAL_ERROR", message))
