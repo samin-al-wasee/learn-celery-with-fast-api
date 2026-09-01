@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (2 entries: alembic, sync-in-async)
+- **M1 — Auth & CRUD** (4 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -85,6 +85,18 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** one `.bru` file per example, folder mirrors the API surface, `{{baseUrl}}` keeps it portable, asserts encode the contract (status + body).
 - **Interview answer:** *"Every endpoint I ship has a runnable example in the repo's API collection — versioned, diffable, with asserts. Onboarding or debugging becomes 'open Bruno, press send', not 'read the code and reconstruct the request'."*
 - **Trap to avoid:** "Swagger docs are enough." Swagger shows the shape; a collection proves the happy path works and keeps exercising it.
+
+### `2026-09-01 · M1` — login + JWT (CPU-bound crypto: argon2 in the loop)
+
+- **What we did:** Added `POST /auth/login` (naive first: `verify_password` straight in the async handler), JWT helpers (`create/decode_access_token`, minimal claims `sub=user_id`/`iat`/`exp`, HS256), a `get_current_user` dependency that **loads the user fresh from the DB each request**, and protected `GET /users/me`. Observed the failure with `scripts/observe_cpu_blocking.py`, then moved hash/verify to a threadpool. Bruno flow: signup captures `signup_email` → login captures `access_token` → me authenticates with it.
+- **Observed (naive):** 8 wrong-password logins + health probe issued together → total wall **~413ms**, later logins finishing at ~370–410ms — serialized behind each other's argon2. Measured cost: `PasswordHash.recommended()` (argon2id) ≈ **31ms/call** of pure CPU.
+- **Observed (fixed):** logins off the loop → probe reliably fast (~23ms vs ~46ms naive), and the loop is free to serve unrelated traffic during the burst. Honest nuance: 8 concurrent verifies took 179ms threaded vs 245ms sequential — argon2 only ~1.4x parallelizes because hashing saturates cores/GIL; **the fix wins on loop responsiveness, not login wall-time.**
+- **Lesson:** crypto is deliberately slow (argon2id ≈ 30ms+). Doing it *on* the loop stalls every request under a login storm; `run_in_threadpool` moves the CPU to the anyio default threadpool. The key distinction — I/O and CPU concurrency: async gives I/O concurrency by `await`, but there is ONE thread for Python bytecode; CPU work needs a real thread. Leave the refine-to-boundary design (concurrency → parallelism mapping) for M3.
+- **Fix / best practice:** `await run_in_threadpool(verify_password, ...)` and `run_in_threadpool(hash_password, ...)` in `app/api/routes/auth.py`; note `starlette.concurrency.run_in_threadpool` == `anyio.to_thread`. DB fetch stays async; only the CPU step leaves the loop. Passing the AsyncSession across threads is avoided — only pure data crosses the boundary.
+- **Why this matters later (M3):** the default threadpool is finite and shared. Under real load, dedicated workers (Celery) take the CPU-heavy + retryable work; the loop keeps doing I/O. This is the naive-fix that becomes the seed of the workers milestone.
+- **JWT design rationale:** `sub` = `user_id` (int as string), no email/role in the token — the dependency re-reads the user from the DB, so role revocation/deactivation applies immediately (token can't outlive a DB-level demotion). `exp`+`iat` standard claims; HS256 with a dev-only fallback secret from env (`JWT_SECRET`, `.env.example`).
+- **Interview answer:** *"Passwords are hashed with argon2id, which is intentionally slow — ~30ms per verify. In an async server that CPU work must never run on the event loop or it freezes every concurrent request, so I delegate it to a threadpool. Tokens are short-lived JWTs with just `sub`, `iat`, and `exp`; I re-load the user from the DB on every request so authz reflects current state, and rotation/revocation stays simple."*
+- **Trap to avoid:** "I'll put the whole user object in the JWT so I don't need a DB round-trip." That's a caching tank that can hand out expired roles; and adding `run_in_threadpool` everywhere as a reflex without thinking about which call actually blocks.
 
 ---
 

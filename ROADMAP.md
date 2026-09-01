@@ -31,13 +31,18 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Project skeleton: `app/` package, settings, routers, database module
 - [x] Docker stack up: postgres + redis (+ rabbitmq later) — all healthy
 - [x] SQLAlchemy async + Alembic migrations wired — User model, first migration applied
-- [ ] Signup (✅ done) / **Login + JWT** — next increment
+- [ ] Signup (✅ done) / **Login + JWT** (✅ done — increment `feat/login-jwt`)
 - [x] **Naive:** sync `Session` in async endpoint → observe event-loop blocking — probe blocked ~1085ms
 - [x] **Fix:** `AsyncSession` dependency injection — probe ~24ms, loop free
 - [x] Bruno collection: directory + health/signup examples; next endpoints add theirs
+- [x] **Naive:** `verify_password` (argon2 ≈31ms CPU) directly in async handler → observe CPU-blocking — 8×login burst ~413ms, logins serialized
+- [x] **Fix:** `run_in_threadpool` for hash/verify — loop free during burst (probe ~23ms), honest: argon2 still ~1.4x parallel
+- [x] JWT: minimal claims (`sub`/`iat`/`exp`, HS256), env secret, `get_current_user` re-reads user from DB, protected `GET /users/me`
+- [x] Bruno flow: signup → login → me (chained vars) — verified live
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
 - [ ] Pydantic validation, consistent response envelope, error handling
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
+- [x] LEARNING.md log + interview section for "cpu-bound work off the loop (argon2 + threadpool)" — ✔ entry added
 
 ---
 
@@ -155,3 +160,6 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-01 | M0 | Docs scaffolded | ✅ |
 | 2026-09-01 | M0/M1 | git init, docker compose stack (postgres/redis/rabbitmq), FastAPI + async DB skeleton | ✅ |
 | 2026-09-01 | M1 | User model + Alembic async migrations (first migration applied, psql verified) | ✅ |
+| 2026-09-01 | M1 | naive signup (sync session + sleep) → observed probe blocked ~1085ms → `AsyncSession` DI | ✅ |
+| 2026-09-01 | M1 | Bruno collection: health + signup (dynamic vars) | ✅ |
+| 2026-09-01 | M1 | Login + JWT: naive argon2-in-loop → observed CPU burst ~413ms/8 → threadpool fix + `GET /users/me` + Bruno flow | ✅ |
