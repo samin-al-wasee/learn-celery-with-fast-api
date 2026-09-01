@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (11 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation)
+- **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -172,6 +172,17 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** `AppointmentUpdate` uses `exclude_unset` (only sent fields), `Literal` for the one legal status value; participants check first, then per-field guards (role, transition table, `future` on reschedule). Profile: `ProfileResponse` now returns `specialty`/`phone`; schema enforces E.164 pattern; role guard for specialty.
 - **Interview answer:** *"An update endpoint on a stateful resource is a transition: I authorize who's allowed, restrict which states it can run from, and treat repeats as idempotent no-ops. Data-format rules (phone E.164, allowed enum values) live in the schema so they 422 at the boundary; entitlement rules (doctor-only specialty, doctor-only confirm) live in the handler as 403s — mixing the two layers causes exactly the 'why is my validation also my authz' confusion."*
 - **Trap to avoid:** giving PATCH free rein on a resource that has a lifecycle — you'll rewrite history — and putting role checks into Pydantic (schema can't see who's asking).
+
+### `2026-09-02 · M1` — validation layers: schema shape vs handler state + the envelope crash
+
+- **What we did:** hardened payload validation across all CRUD. `str_strip_whitespace=True` + `min_length=1` on names/reasons/titles/notes (rejects `"   "`), role-aware signup (`specialty` required for doctors via `model_validator`), and a **15-minute scheduling lead time**. Observed with `scripts/observe_validation.py`.
+- **Observed (naive):** doctor without specialty → **201**; blank `full_name` → **201** (stored whitespace); appointment 5 min out → **201**; blank reason → **201**.
+- **Observed (hardened):** no-specialty doctor → **422**; blank name → **422**; 5-minute lead → **400** `PAST_SCHEDULED_AT`; blank reason → **422**; valid everything → 201.
+- **Unexpected gold bug found mid-run:** the no-specialty 422 was at first a **500**, not 422. Pydantic's model_validator errors embed the actual `ValueError` object in `errors()[].ctx`, and our envelope handler passed `exc.errors()` straight to `json.dumps` → `TypeError: Object of type ValueError is not JSON serializable` → the **error response itself crashed**. Lesson: an error handler must be safe against arbitrary error content — sanitize non-primitive `ctx` values (`str(v)`) before render; error paths are exactly where serialization shortcuts bite.
+- **Lesson — two validation layers with two status codes:** *static shape* rules (formats, presence, relationships between fields) belong in Pydantic and answer **422** (`Literal` for allowed values, `pattern` for phone, `model_validator` for doctor-needs-specialty, `strip_whitespace` for `"   "`). *State/time* rules (scheduling lead time needs "now"; transitions need the row's current status) belong in the **handler** and answer **400/409**. The schema cannot know the time or the record; the handler should not re-implement formats.
+- **Fix / best practice:** `ConfigDict(str_strip_whitespace=True)` + `min_length=1` so whitespace-only fails; role conditional via `model_validator(mode="after")`; lead time as handler check (`<= now + 15 min → 400`); error serialization sanitized centrally in `errors.py`.
+- **Interview answer:** *"Validation splits into two layers: static shape in Pydantic — formats, lengths, `Literal` value sets, role-conditional fields — which surfaces as 422 with zero handler code; and state/time rules in the handler — lead time, transitions, ownership — surfacing as 400/409. And I learned the hard way to sanitize Pydantic's `ctx` before rendering errors, because the error handler itself must never crash."*
+- **Trap to avoid:** trusting `min_length` to catch blank strings (whitespace passes) — combine with `str_strip_whitespace`; and echoing `exc.errors()` into the response envelope without making it JSON-safe.
 
 ---
 
