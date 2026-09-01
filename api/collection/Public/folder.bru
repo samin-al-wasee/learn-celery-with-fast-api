@@ -1,0 +1,14 @@
+meta {
+  name: Public
+  seq: 1
+}
+
+auth {
+  mode: none
+}
+
+docs {
+  Public endpoints: no auth. Requests here inherit `mode: none` from
+  this folder root. Login sets the collection variable `access_token`
+  which the Protected branch consumes.
+}

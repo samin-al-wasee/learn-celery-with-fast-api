@@ -60,6 +60,7 @@ Be explicit, concise, concrete. Give the `file:line` references.
 - Run migrations via Alembic; avoid `Base.metadata.create_all` in production paths.
 - Follow existing file structure; mimic surrounding code style for new files.
 - **Every endpoint (HTTP, WebSocket, SSE, anything) ships with a Bruno example** under `api/collection/`, mirroring the route — filename matches the action, URL uses `{{baseUrl}}`, realistic JSON body, and asserts. **Bodies use Bruno dynamic variables (`{{$randomEmail}}`, `{{$randomFirstName}}`, `{{$guid}}`) by default** so re-runs send fresh unique data (manual fixed values only when the fixture must be specific). No endpoint merges to `main` without its collection example.
+- **Collection layout — two auth roots:** `Public/` (no auth, root pins `auth mode: none`) vs `Protected/` (root `Protected/folder.bru` defines bearer auth via `token: {{access_token}}`). Public auth endpoints (signup, login) carry **no auth**; the login example's post-response script auto-sets `access_token` (`bru.setVar`). Protected and all *nested* endpoints use `auth: inherit` and get the bearer token from the Protected parent root — never a per-request auth block. New protected routes live under `Protected/` and inherit automatically.
 - Wire tasks through Celery app instance; do not create ad-hoc threads inside FastAPI for background work (that's the naive mistake we document first).
 - **No code comments unless they capture a learning insight** — we prefer explanations live in `LEARNING.md`.
 

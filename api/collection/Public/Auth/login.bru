@@ -17,13 +17,13 @@ body:json {
   }
 }
 
-script:post-response {
-  const data = res.getBody();
-  bru.setVar('access_token', data.access_token);
-}
-
 assert {
   res.status: eq 200
   res.body: contains "access_token"
   res.body: contains "bearer"
+}
+
+script:post-response {
+  const data = res.getBody();
+  bru.setVar('access_token', data.access_token);
 }

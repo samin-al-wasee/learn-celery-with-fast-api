@@ -1,0 +1,19 @@
+meta {
+  name: Protected
+  seq: 2
+}
+
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  Protected endpoints: bearer JWT. Every request nested under this
+  folder root inherits this auth via `auth: inherit` — no per-request
+  auth block needed. Run Public/Auth/Login first to populate
+  `access_token` (its post-response script sets the variable).
+}
