@@ -21,6 +21,7 @@ body:json {
 }
 
 script:post-response {
+  if (res.status !== 201) return;
   const data = res.getBody();
   bru.setVar('signup_email', data.email);
 }

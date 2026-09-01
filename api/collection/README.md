@@ -25,11 +25,12 @@ Test every endpoint of the Cardicheck API from Bruno.
 - One `.bru` file per example; folder layout mirrors the API surface
   (`Public/Health/`, `Public/Auth/`, `Protected/Users/`, ...).
 - **Auth flow (auto-set token):**
-  1. `Public/Auth/Signup Doctor` (or Patient) → post-response sets
-     `signup_email`.
-  2. `Public/Auth/Login` (no auth) → 200 + `access_token`; its post-response
-     script runs `bru.setVar('access_token', data.access_token)`, so the
-     variable is auto-populated for every request under `Protected/`.
+  1. `Public/Auth/Signup Doctor` (or Patient) → on **201** its post-response
+     sets `signup_email`.
+  2. `Public/Auth/Login` (no auth) → on **200** its post-response sets
+     `access_token` and **clears `signup_email`** (the account now exists —
+     the email was consumed). Variable lifecycle: each signup captures the
+     email only on success, and login empties it again on success.
   3. Any `Protected/...` request inherits the bearer token and just works.
   Run `Login` again whenever the token expires (the demo JWT lives 60 min).
 - URLs use `{{baseUrl}}` so the collection is portable (local/CI/prod).

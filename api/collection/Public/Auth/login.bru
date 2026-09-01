@@ -33,4 +33,7 @@ script:post-response {
   if (res.status !== 200) return;
   const data = res.getBody();
   bru.setVar('access_token', data.access_token);
+  // signup_email is consumed: the account now exists, so clear it for a
+  // fresh cycle (signup -> capture -> login -> cleared).
+  bru.setVar('signup_email', '');
 }
