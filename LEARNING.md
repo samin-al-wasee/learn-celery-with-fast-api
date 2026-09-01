@@ -79,7 +79,7 @@ Keep it as bullets, not essays.
 
 ### `2026-09-01 · M1` — Bruno API collection (endpoint testing convention)
 
-- **What we did:** Added a git-friendly **Bruno** collection under `api/collection/` (bruno.json + `{{baseUrl}}`-based `.bru` examples for `/health` and `/auth/signup` with asserts). Made the rule explicit in `AGENTS.md` §5: **every endpoint — HTTP, WebSocket, SSE — ships with its Bruno example before merging to `main`.**
+- **What we did:** Added a git-friendly **Bruno** collection under `api/collection/` (bruno.json + `{{baseUrl}}`-based `.bru` examples for `/health` and `/auth/signup` with asserts). Made the rule explicit in `AGENTS.md` §5: **every endpoint — HTTP, WebSocket, SSE — ships with its Bruno example before merging to `main`.** Then switched signup bodies to Bruno's faker-backed **dynamic variables** (`{{$randomEmail}}`, `{{$randomFirstName}}`, `{{$randomLastName}}`, `{{$guid}}`) so re-runs send unique data instead of colliding on a fixed email.
 - **Observed:** not a failure — a tooling gap. Before this, examples lived in chat history and died with the session.
 - **Lesson:** an API is only as testable as its examples. If the only way to hit an endpoint is to re-derive the payload, the API is undocumented regardless of Swagger.
 - **Fix / best practice:** one `.bru` file per example, folder mirrors the API surface, `{{baseUrl}}` keeps it portable, asserts encode the contract (status + body).

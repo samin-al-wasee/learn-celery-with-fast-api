@@ -16,6 +16,12 @@ Test every endpoint of the Cardicheck API from Bruno.
 - One `.bru` file per example; folder layout mirrors the API surface
   (`Auth/`, `Health/`, ...).
 - URLs use `{{baseUrl}}` so the collection is portable (local/CI/prod).
+- **Dynamic data by default:** bodies use Bruno's built-in faker-backed
+  dynamic variables (`{{$randomEmail}}`, `{{$randomFirstName}}`,
+  `{{$randomLastName}}`, `{{$guid}}`, `{{$timestamp}}`) so every run sends a
+  fresh, unique payload — no manual retyping. Override a field for a single
+  run by editing the body, or force a prompt with a prompt variable
+  (`{{?email}}`).
 - **Rule:** no endpoint ships without its Bruno example — see `AGENTS.md`.
 - Environments are stored in Bruno's config, **not** committed to this repo:
   only `bruno.json` + `.bru` files live here.
