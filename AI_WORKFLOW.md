@@ -8,7 +8,7 @@ The guided learning loop used for every task in this repo. This is the **process
 
 ## The message format
 
-Every task starts with a plan that follows this exact framing. Use these labels explicitly so the reasoning is visible and the user can follow along (or stop you at any step):
+**This format is mandatory for EVERY response about anything we do** — code, concept, tool, setup, even a yes/no question. Never answer outside it. If a label doesn't apply, say which ones do; never answer with none. The labels stay explicit every time so the reasoning is visible and the user can follow along (or stop you at any step):
 
 | Label | Meaning | Example |
 |-------|---------|---------|
@@ -19,6 +19,8 @@ Every task starts with a plan that follows this exact framing. Use these labels 
 | **BEST_PRACTICE** | The right way | *"Push the job to a shared queue (Celery broker) and let a worker process handle it with retries and state."* |
 | **BECAUSE** | The technical reason | *"Async HTTP servers complete requests quickly; long work must leave the request path so the event loop stays free. A broker gives durability + horizontal scaling."* |
 | **TRADEOFFS** | When the simple thing is still fine, and what it costs | *"For <10 users, inline work is fine — you pay in lost scale and no retry guarantees; acceptable for demos, unacceptable for production."* |
+
+*(Oversight does not excuse the format. If a response misses it, re-say it in format.)*
 
 ## The 5-step loop (do not skip steps)
 

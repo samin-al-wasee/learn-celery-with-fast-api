@@ -35,10 +35,12 @@ If you are about to repeat a mistake already logged in `LEARNING.md`, stop and s
 
 ## 4. Teaching style when explaining
 
+**Every single response about anything we do — code, concept, tool, setup, a yes/no question — must use the message format below. Do not answer outside it.** The labels must be explicit every time, never implied. If a label doesn't apply, state the ones that do; never answer without the format.
+
 Follow the message framing from `AI_WORKFLOW.md`:
 
 - **WE_NEED** → what the goal is and why
-- **INITIAL** → the naive approach we'll try
+- **INITIAL** → the naive approach we'll try / what a beginner would do
 - **PROBLEMS** → what breaks and why
 - **AVOID** → the trap / anti-pattern
 - **BEST_PRACTICE** → the right way
