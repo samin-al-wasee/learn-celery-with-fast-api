@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (4 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking)
+- **M1 — Auth & CRUD** (5 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -97,6 +97,15 @@ Keep it as bullets, not essays.
 - **JWT design rationale:** `sub` = `user_id` (int as string), no email/role in the token — the dependency re-reads the user from the DB, so role revocation/deactivation applies immediately (token can't outlive a DB-level demotion). `exp`+`iat` standard claims; HS256 with a dev-only fallback secret from env (`JWT_SECRET`, `.env.example`).
 - **Interview answer:** *"Passwords are hashed with argon2id, which is intentionally slow — ~30ms per verify. In an async server that CPU work must never run on the event loop or it freezes every concurrent request, so I delegate it to a threadpool. Tokens are short-lived JWTs with just `sub`, `iat`, and `exp`; I re-load the user from the DB on every request so authz reflects current state, and rotation/revocation stays simple."*
 - **Trap to avoid:** "I'll put the whole user object in the JWT so I don't need a DB round-trip." That's a caching tank that can hand out expired roles; and adding `run_in_threadpool` everywhere as a reflex without thinking about which call actually blocks.
+
+### `2026-09-01 · M1` — Bruno collection: Public vs Protected auth roots
+
+- **What we did:** Restructured the collection into two top-level roots. `Public/folder.bru` pins `auth mode: none`. `Protected/folder.bru` declares `auth mode: bearer` with `token: {{access_token}}`; every nested request uses `auth: inherit` and gets the token from the folder root — **no per-request auth blocks**. The public `Login` example's post-response script auto-sets `access_token` (`bru.setVar`), so exactly one request (login) culminates in auth for the entire protected tree. Removed a stale `vars:pre-request` override that was hardcoding a dead email in login.
+- **Observed (naive structure):** originally every request carried its own `auth` block — auth duplicated N times, easy to miss on new endpoints, and signup/login living in a plain `Auth/` folder gave no hint about which requests needed a token. Doubling: two requests to update (real token value + URL) whenever auth changed.
+- **Lesson:** an API collection is a contract too, so it needs the same DRY that code needs — auth is a *cascading concern*: collection → folder → request. Bruno models it with `collection.bru` / `folder.bru`, and `auth: inherit` at the request level. Form follows the API's security boundary: public endpoints *cannot* accidentally inherit credentials.
+- **Fix / best practice:** two roots — `Public/` (folder-level `none`) and `Protected/` (folder-level bearer); nested request files under `Protected/` declare only what's theirs; one auth-mutation point (login) writes the collection variable every other request reads. Rule codified in `AGENTS.md` §5 so future endpoints follow it automatically.
+- **Interview answer:** *"I treat the API test collection as a reproducible contract: auth is configured once at the folder root and inherited by every nested request — public and protected endpoints are physically separated. One login example sets the token variable that the whole protected tree consumes, so onboarding a new endpoint is 'drop a file in the folder, it's already authenticated'."*
+- **Trap to avoid:** duplicating `Authorization` headers/tokens per request — it rots fast (stale token values, forgotten audits) and gives reviewers the illusion that auth is per-route instead of per-boundary.
 
 ---
 
