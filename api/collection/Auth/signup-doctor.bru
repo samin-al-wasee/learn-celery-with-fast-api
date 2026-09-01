@@ -20,6 +20,11 @@ body:json {
   }
 }
 
+script:post-response {
+  const data = res.getBody();
+  bru.setVar('signup_email', data.email);
+}
+
 assert {
   res.status: eq 201
   res.body: contains "id"
