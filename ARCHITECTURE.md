@@ -1,0 +1,158 @@
+# ARCHITECTURE.md
+
+Current stack, data flow, and the reasoning behind every architectural decision. This file deliberately evolves with us: each milestone rewrites it as we refactor (monolith → microservices).
+
+---
+
+## Stack (declared, not yet running)
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| API framework | **FastAPI** (Python 3.11+) | Async-first, auto OpenAPI docs, Pydantic validation |
+| ORM | **SQLAlchemy 2.x (async)** | Standard async ORM; migrations with Alembic |
+| Migrations | **Alembic** | Versioned schema changes; never `create_all` in prod path |
+| Validation/schemas | **Pydantic v2** | FastAPI-native; runtime validation in and out |
+| Primary DB | **PostgreSQL** | Strong consistency for healthcare-ish data, JSONB, mature operations |
+| Cache / result backend | **Redis** | In-memory key-value; also used for pub/sub (chat bus) |
+| Message broker | **RabbitMQ** | AMQP features Celery needs (acks, routing, DLQs); also our own event bus |
+| Background tasks | **Celery** (+ Flower for observability) | Distributed task queue on a real broker |
+| Realtime messaging | **WebSockets (FastAPI)** → Redis pub/sub across workers | Bidirectional, low-latency chat (M4) |
+| Calls (future) | **WebRTC** + SFU (mediasoup/LiveKit) | P2P first, SFU when scaling (M7) |
+| Infra | **Docker Compose** (all services containerized) | Parity with production topology on one machine |
+
+### Planned Docker services
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                         docker compose                               │
+│                                                                       │
+│   ┌─────────────┐        ┌──────────────┐        ┌───────────────┐   │
+│   │   api        │  ───▶ │  postgres    │        │   redis       │   │
+│   │ (FastAPI)    │  ───▶ │   :5432      │        │   :6379       │   │
+│   └──────┬───────┘  ws   └──────────────┘        └──────┬────────┘   │
+│          │       (M4+)                                  │ pub/sub    │
+│          ▼                                               ▼           │
+│   ┌─────────────┐        ┌───────────────────────────────────────┐   │
+│   │  celery     │  ───▶  │  rabbitmq      :5672                  │   │
+│   │  worker(s)  │  ◀───  │  (AMQP broker + event bus, > M3)     │   │
+│   └─────────────┘        └───────────────────────────────────────┘   │
+│                                                                       │
+│   (services: api, worker, postgres, redis, rabbitmq — at minimum)    │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Evolution of the architecture (the learning journey)
+
+### Phase 0 — Foundation (current) ✅
+No code. Docs + process only.
+
+### Phase 1 — Monolith, naive (planned M1/M2)
+Single FastAPI app talking to Postgres + Redis. This is where we deliberately make the first mistakes:
+- sync DB session in an async endpoint
+- process-local "cache" dict
+- ad-hoc background thread for jobs
+
+**Diagram:**
+```
+Client ──▶ FastAPI (one process) ──▶ Postgres
+                                └──▶ ("cache": process dict)
+                                └──▶ ("background": threading.Thread)
+```
+
+### Phase 2 — Async-first monolith (planned M3)
+Introduce Celery worker + RabbitMQ broker + Redis result backend.
+```
+                  ┌────────────────────────────┐
+                  │  FastAPI  (request path)   │  ──▶ Postgres, Redis
+                  └────────────┬───────────────┘
+                               │  task (JSON payload)
+                               ▼
+                  RabbitMQ ──▶ Celery worker(s) ──▶ Postgres/Redis/API calls
+                  (broker)     (retries, ETA, beat schedule)
+```
+
+### Phase 3 — Realtime chat (planned M4)
+WebSockets terminate in FastAPI; Redis pub/sub carries messages across workers so any worker can reach any connected client.
+```
+ Client A ──ws──▶ Worker1 ──publish──▶ Redis pub/sub ──sub──▶ Worker2 ──ws──▶ Client B
+```
+Redis pub/sub is a *bus*, not a queue — no persistence, no acks. That limitation becomes our lesson.
+
+### Phase 4 — Microservices (planned M6)
+Broken into services, each owning its data:
+```
+Client ──▶ API Gateway
+              │
+   ┌──────────┼──────────────┬──────────────┐
+   ▼          ▼              ▼              ▼
+ auth     core (patients/  chat          notifications
+ service     doctors)      service          service
+   │          │              │              │
+ (own DB)  (own DB)      (own DB)      (own DB)
+   └──────────┴────────── RabbitMQ event bus ─────┘
+```
+Events (e.g. `appointment.booked`) replace direct calls between services. Sync HTTP calls remain only where immediate response is required. Saga patterns handle multi-step writes.
+
+### Phase 5 — Calls (planned M7)
+WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) initially, then via SFU when group calls need it.
+
+---
+
+## Cross-cutting decisions
+
+### Request path vs worker path (async boundary)
+- HTTP responses must be **fast** → anything slow/side-effecting goes to Celery.
+- Event loop stays free; workers do the hard lifting; blocking DB calls never touch the async loop.
+- Rationale/lesson: an async server's concurrency is *not* free CPU — blocking calls defeat the event loop.
+
+### Consistency model
+- Primary store: PostgreSQL (strong consistency, ACID for core medical-ish data).
+- Cache + pub/sub: Redis (best effort, TTL'd, eventual, invalidation via events where possible).
+- After M5 we'll document our exact tradeoff: for latency-sensitive reads we accept stale-by-TTL; for correctness (appointments, medications) we always read-through.
+
+### Messaging model (after M3)
+- **Command/job queue (Celery):** durable, acked, retried — for work the system must complete.
+- **Event bus (RabbitMQ topic/fanout, M5):** fire-and-forget notifications "something happened"; consumers decide what to do.
+- **Redis pub/sub (M4):** transient realtime fan-out to connected sockets only.
+
+### Delivery semantics (to be proven in M3/M5)
+- Target: **at-least-once** everywhere → every consumer that mutates state must be **idempotent**. Exactly-once is impossible in distributed systems; we prove why.
+- DLQ for poison messages; dead-letter analysis as a debugging tool.
+
+### Data ownership rule (from M6)
+- A table belongs to exactly one service. Cross-service reads go through that service's API or via events. No shared-SQL-table shortcuts.
+
+---
+
+## Decision log (append-only)
+
+| Date | Decision | Alternative rejected | Why (BECAUSE) |
+|------|----------|----------------------|---------------|
+| 2026-09-01 | Learn on a monolith first (M1–M5), split later (M6) | Microservices day one | Distributed debugging overlaps every other topic; we learn basics with a single moving part, then learn distributed failure *deliberately* when complexity belongs to the problem, not the setup |
+| 2026-09-01 | RabbitMQ as Celery broker | Redis as broker | RabbitMQ gives durable queues/acks/DLQ — needed for interview-grade understanding of queue semantics; Redis broker is a dev convenience |
+| 2026-09-01 | Redis as result backend | — | Results are ephemeral; Redis eviction model matches "store last N results" reality |
+| 2026-09-01 | Postgres as source of truth even for chat history | Redis for history | Redis is memory-bound; history must be durable, cursor-paged; Redis cache on top (M2 merge) |
+| 2026-09-01 | WebRTC (P2P→SFU) for calls in M7 | Prebuilt SDK | P2P→SFU is the classic interview narrative; forces real-time reasoning |
+
+*(Every later milestone appends here with a BECAUSE.)*
+
+---
+
+## Operational notes
+
+- **Ports (compose, planned):** api:8000 · postgres:5432 · redis:6379 · rabbitmq:5672 (+ management 15672) · flower:5555
+- **Secrets:** `.env` (gitignored); never in code.
+- **Fictional data only.** No real patient information anywhere in this repo.
+- **Migrations:** `alembic upgrade head` after each model change; `alembic revision --autogenerate -m "..."` to create.
+
+## Origin of terms used here
+If an interview answer uses a term below, it should link to the section where we learned it:
+| Term | Where we learn it |
+|------|-------------------|
+| Celery broker vs backend | M3 |
+| Idempotency / at-least-once | M3, M5, M6 |
+| Redis pub/sub ≠ queue | M4 |
+| Exchange/queue/binding | M5 |
+| Saga / distributed transaction | M6 |
+| SFU vs mesh / STUN vs TURN | M7 |
