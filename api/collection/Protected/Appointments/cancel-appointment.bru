@@ -1,0 +1,17 @@
+meta {
+  name: Cancel Appointment
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}/cancel
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "data"
+  res.body: contains "cancelled"
+}

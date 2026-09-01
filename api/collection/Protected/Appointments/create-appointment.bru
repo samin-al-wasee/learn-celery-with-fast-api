@@ -32,3 +32,9 @@ assert {
   res.body: contains "pending"
   res.body: contains "scheduled_at"
 }
+
+script:post-response {
+  if (res.status !== 201) return;
+  const data = res.getBody().data;
+  bru.setVar('appt_id', data.id);
+}
