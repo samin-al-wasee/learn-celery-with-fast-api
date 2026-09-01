@@ -37,19 +37,27 @@ async def main() -> None:
         h = {"Authorization": f"Bearer {t}"}
 
         soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)).isoformat()
+        far = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).isoformat()
         r = await c.post(
             "/api/v1/appointments",
-            json={"doctor_id": doc[1]["data"]["id"], "scheduled_at": soon, "reason": "   "},
+            json={"doctor_id": doc[1]["data"]["id"], "scheduled_at": soon, "reason": "valid"},
             headers=h,
         )
-        print(f"appt 5 min out + blank reason : {r.status_code}  (WANT 400 lead-time + 422 blank fixed; naive accepts both)")
+        print(f"appt 5 min out (valid reason): {r.status_code}  (WANT 400 lead-time fixed; naive accepts)")
 
         r = await c.post(
             "/api/v1/appointments",
-            json={"doctor_id": doc[1]["data"]["id"], "scheduled_at": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).isoformat(), "reason": "valid"},
+            json={"doctor_id": doc[1]["data"]["id"], "scheduled_at": far, "reason": "   "},
             headers=h,
         )
-        print(f"valid appt                    : {r.status_code}")
+        print(f"appt blank reason            : {r.status_code}  (WANT 422 blank fixed; naive accepts)")
+
+        r = await c.post(
+            "/api/v1/appointments",
+            json={"doctor_id": doc[1]["data"]["id"], "scheduled_at": far, "reason": "valid"},
+            headers=h,
+        )
+        print(f"valid appt                   : {r.status_code}")
 
 
 if __name__ == "__main__":

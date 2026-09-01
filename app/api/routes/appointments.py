@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import ceil
 
 from fastapi import APIRouter, Depends, status
@@ -42,11 +42,12 @@ async def create_appointment(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[AppointmentResponse]:
-    if payload.scheduled_at <= datetime.now(timezone.utc):
+    # Temporal rule (handler, not schema): needs "now", which is runtime state.
+    if payload.scheduled_at <= datetime.now(timezone.utc) + timedelta(minutes=15):
         raise CardicheckError(
             status_code=status.HTTP_400_BAD_REQUEST,
             code="PAST_SCHEDULED_AT",
-            message="scheduled_at must be in the future",
+            message="scheduled_at must be at least 15 minutes from now",
         )
 
     if current_user.role == UserRole.PATIENT:
@@ -233,11 +234,11 @@ async def update_appointment(
         )
 
     if "scheduled_at" in updates:
-        if updates["scheduled_at"] <= datetime.now(timezone.utc):
+        if updates["scheduled_at"] <= datetime.now(timezone.utc) + timedelta(minutes=15):
             raise CardicheckError(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 code="PAST_SCHEDULED_AT",
-                message="scheduled_at must be in the future",
+                message="scheduled_at must be at least 15 minutes from now",
             )
         appt.scheduled_at = updates["scheduled_at"]
     if "reason" in updates:

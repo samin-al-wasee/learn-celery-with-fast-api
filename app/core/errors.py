@@ -53,11 +53,21 @@ def register_exception_handlers(app: FastAPI) -> None:
         message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return JSONResponse(status_code=exc.status_code, content=_error_body(code, message))
 
+    def _json_safe(err: dict[str, Any]) -> dict[str, Any]:
+        # Pydantic errors can carry non-serializable context (model_validator
+        # raises embed the ValueError in `ctx`) — the error envelope must not
+        # be able to crash its own response, so stringify anything non-primitive.
+        ctx = err.get("ctx") or {}
+        safe_ctx = {k: (v if isinstance(v, (str, int, float, bool)) or v is None else str(v)) for k, v in ctx.items()}
+        out = dict(err)
+        out["ctx"] = safe_ctx
+        return out
+
     @app.exception_handler(RequestValidationError)
     async def on_validation_error(_request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
-            content=_error_body("VALIDATION_ERROR", "request validation failed", {"errors": exc.errors()}),
+            content=_error_body("VALIDATION_ERROR", "request validation failed", {"errors": [_json_safe(e) for e in exc.errors()]}),
         )
 
     @app.exception_handler(Exception)
