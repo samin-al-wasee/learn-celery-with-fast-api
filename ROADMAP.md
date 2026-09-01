@@ -41,8 +41,10 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Bruno flow: signup → login → me (chained vars) — verified live
 - [x] **Envelope + error handling:** one response shape (data/meta/error + stable codes 409/401/422/404/500) via `ApiResponse[T]` + centralized handlers; all endpoints + Bruno asserts updated — verified live
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
+- [x] **Appointments CRUD slice:** migration `e30a4c8a53e0` + `POST /appointments` (role-based booking) + naive `GET` (1+N) observed **601 execs/388ms → fixed** pagination + `selectinload` (~4 execs/7ms) + `meta.pagination` — verified live
+- [ ] Appointments update/cancel + records + profiles CRUD (next slices)
 - [ ] Deeper Pydantic validation on CRUD payloads (dates, ranges, role-specific fields)
-- [x] LEARNING.md log + interview section for "envelope + error handling" — ✔ entry added
+- [x] LEARNING.md log + interview section for "N+1 + pagination" — ✔ entry added
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
 - [x] LEARNING.md log + interview section for "cpu-bound work off the loop (argon2 + threadpool)" — ✔ entry added
 
@@ -167,3 +169,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-01 | M1 | Login + JWT: naive argon2-in-loop → observed CPU burst ~413ms/8 → threadpool fix + `GET /users/me` + Bruno flow | ✅ |
 | 2026-09-01 | M1 | Bruno auth roots: Public (no auth) vs Protected (inherited bearer) + var lifecycle | ✅ |
 | 2026-09-01 | M1 | Response envelope + centralized exception handlers (409/401/422/404/500) — all endpoints + Bruno asserts updated | ✅ |
+| 2026-09-01 | M1 | Appointments CRUD slice: migration + booking + naive 1+N list (601 execs/388ms) → pagination + selectinload (~4/7ms) + meta.pagination | ✅ |

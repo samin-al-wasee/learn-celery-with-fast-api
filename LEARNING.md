@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (6 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope)
+- **M1 — Auth & CRUD** (7 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -117,6 +117,17 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** one generic `ApiResponse[T]`; domain code raises `CardicheckError(status, code, message, details)`; `register_exception_handlers` in `main.py` maps every failure path to the same envelope, including foreign classes (FastAPI 422, Starlette 404). `settings.debug` decides how much of a 500 leaks.
 - **Interview answer:** *"I define one response envelope — success data plus an error object with a stable code, human message, and structured details — and enforce it at the edges with FastAPI exception handlers, so route handlers stay clean and every failure path (validation, not-found, domain conflicts, crashes) serializes identically. Codes, not freeform 'detail' strings, are the machine contract; messages are for humans."*
 - **Trap to avoid:** "Errors are fine as `{'detail': '...'}`" — with that, upgrading any client or adding an SDK means touching every endpoint; and leaking raw `str(exc)` to clients in prod is a security hole, not a convenience.
+
+### `2026-09-01 · M1` — appointments CRUD: N+1 queries + pagination
+
+- **What we did:** Added `appointments` table (migration `e30a4c8a53e0`, enum `appointment_status`), `POST /appointments` with role-based participant validation (patient books a doctor / doctor books a patient, future `scheduled_at`, participant-role checks), and a **naive** `GET /appointments` that returned every row and fetched patient+doctor with a query per row. Observed the explosion with `scripts/observe_n_plus_1.py`, then fixed: `limit/offset` + `selectinload` + `meta.pagination`.
+- **Observed (naive):** 100 appointments with distinct participants → **601 cursor executions / ~388ms** for everything (1 query for rows + 200 per-row lookups ×~2 due to asyncpg prepare+execute). Earlier attempt reused the same 2 users and measured only 2 queries — the load was absorbed by SQLAlchemy's **identity map** (a real-world nuance: repeated lookups are cached; N+1 bites when the entities are distinct).
+- **Observed (fixed):** 1 page of 20 → **4 cursor executions / ~7ms** (~150× less volume); `meta.pagination` reports page/per_page/total/pages; names accessible after `selectinload` without triggering lazy I/O.
+- **Lesson 1 — N+1:** fetching children one-at-a-time turns 1 query into 1+N; latency isn't the point, *query volume × concurrency* is. In `AsyncSession`, lazy relationship access doesn't silently N+1 — it raises `MissingGreenlet` (async can't transparently block) — the loud, honest failure. Fix with eager loading: `selectinload` (2 IN-queries) > `joinedload` (1 JOIN but row multiplication on collections) > N queries.
+- **Lesson 2 — pagination:** unbounded lists grow with the table and cost nothing per user until they cost everything; `limit/offset` is the baseline. `meta.pagination` is exactly what the envelope's `meta` slot exists for. Known debt (interview note): offset pagination *drifts* when rows are inserted/deleted between pages — keyset pagination fixes that, noted for M8.
+- **Fix / best practice:** `select(Appointment).options(selectinload(...)).where(owned).order_by(...).limit().offset()` + a `func.count()` for total; participants loaded in bulk and rendered from the relationship attributes; owner scoping (`patient_id=me OR doctor_id=me`) is the authz line.
+- **Interview answer:** *"List endpoints get pagination and eager loading. The naive thing — fetch the page, then load the related doctor and patient per row — turns one request into 1+N round trips; with an async schema it can't even do that silently. `selectinload` fetches whole collections in bulk, and `limit/offset` bounds the result; I expose that in `meta: {pagination}`. The trap underneath is the identity map hiding the problem when participants repeat."*
+- **Trap to avoid:** "It's fast in my dev DB so it's fine" — dev data is tiny; N+1 and unbounded lists are the two things that produce the p95 cliff under load. Also: fixing N+1 by loading *everything* "just in case" — paginate first, eager-load only what the page renders.
 
 ---
 
