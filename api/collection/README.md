@@ -37,7 +37,11 @@ Test every endpoint of the Cardicheck API from Bruno.
      ids: `Signup Patient` sets `signup_patient_id` (and `Signup Doctor` sets
      `signup_doctor_id`), which `Create Appointment` uses. Create captures
      `appt_id`, consumed by `Cancel Appointment` (idempotent — repeat returns
-     200 no-op).
+     200 no-op). `Confirm Appointment` (doctor-only) flips it to `confirmed`;
+     the sequence is Signup Patient → Signup Doctor → Login → Create → List →
+     Cancel → Confirm.
+   - `Protected/Users/*`: `Get My Profile` → `Update My Profile`
+     (`PATCH /users/me` — phone must be E.164 `+…`, specialty is doctor-only).
   Run `Login` again whenever the token expires (the demo JWT lives 60 min).
 - URLs use `{{baseUrl}}` so the collection is portable (local/CI/prod).
 - **Dynamic data by default:** bodies use Bruno's built-in faker-backed

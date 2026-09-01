@@ -1,0 +1,22 @@
+meta {
+  name: Update My Profile
+  type: http
+  seq: 2
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/users/me
+  body: json
+  auth: inherit
+}
+
+body:json {
+  full_name: {{$randomFullName}}
+  phone: +15551234567
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "phone"
+  res.body: contains "+15551234567"
+}

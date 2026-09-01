@@ -1,0 +1,20 @@
+meta {
+  name: Confirm Appointment
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  status: confirmed
+}
+
+assert {
+  res.status: eq 200
+  res.body: contains "confirmed"
+}
