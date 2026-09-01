@@ -77,6 +77,15 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"In FastAPI/uvicorn an async endpoint is one task on one event-loop thread. Blocking I/O inside it freezes the whole server — a `time.sleep` or sync driver call doesn't just slow one request, it serializes all of them. So we use async drivers (asyncpg) and `await` every DB call; truly expensive or fire-and-forget work goes to a background task worker, not the request thread."*
 - **Trap to avoid:** "'It's an async endpoint, so it's fine.'" — async signature ≠ non-blocking body. Also `run_in_threadpool` as a reflex: it hides blocking in the default threadpool, which *also* saturates under load.
 
+### `2026-09-01 · M1` — Bruno API collection (endpoint testing convention)
+
+- **What we did:** Added a git-friendly **Bruno** collection under `api/collection/` (bruno.json + `{{baseUrl}}`-based `.bru` examples for `/health` and `/auth/signup` with asserts). Made the rule explicit in `AGENTS.md` §5: **every endpoint — HTTP, WebSocket, SSE — ships with its Bruno example before merging to `main`.**
+- **Observed:** not a failure — a tooling gap. Before this, examples lived in chat history and died with the session.
+- **Lesson:** an API is only as testable as its examples. If the only way to hit an endpoint is to re-derive the payload, the API is undocumented regardless of Swagger.
+- **Fix / best practice:** one `.bru` file per example, folder mirrors the API surface, `{{baseUrl}}` keeps it portable, asserts encode the contract (status + body).
+- **Interview answer:** *"Every endpoint I ship has a runnable example in the repo's API collection — versioned, diffable, with asserts. Onboarding or debugging becomes 'open Bruno, press send', not 'read the code and reconstruct the request'."*
+- **Trap to avoid:** "Swagger docs are enough." Swagger shows the shape; a collection proves the happy path works and keeps exercising it.
+
 ---
 
 ## M4 — Real-time chat — INTERVIEW FILE (placeholder to be filled when we reach it)

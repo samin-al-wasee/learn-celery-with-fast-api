@@ -59,6 +59,7 @@ Be explicit, concise, concrete. Give the `file:line` references.
 - Never log passwords, tokens, or patient health data.
 - Run migrations via Alembic; avoid `Base.metadata.create_all` in production paths.
 - Follow existing file structure; mimic surrounding code style for new files.
+- **Every endpoint (HTTP, WebSocket, SSE, anything) ships with a Bruno example** under `api/collection/`, mirroring the route — filename matches the action, URL uses `{{baseUrl}}`, realistic JSON body, and asserts. No endpoint merges to `main` without its collection example.
 - Wire tasks through Celery app instance; do not create ad-hoc threads inside FastAPI for background work (that's the naive mistake we document first).
 - **No code comments unless they capture a learning insight** — we prefer explanations live in `LEARNING.md`.
 

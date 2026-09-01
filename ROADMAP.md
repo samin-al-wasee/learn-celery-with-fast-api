@@ -34,6 +34,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [ ] Signup (✅ done) / **Login + JWT** — next increment
 - [x] **Naive:** sync `Session` in async endpoint → observe event-loop blocking — probe blocked ~1085ms
 - [x] **Fix:** `AsyncSession` dependency injection — probe ~24ms, loop free
+- [x] Bruno collection: directory + health/signup examples; next endpoints add theirs
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
 - [ ] Pydantic validation, consistent response envelope, error handling
 - [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
