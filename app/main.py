@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import auth, health, users
+from app.api.routes import appointments, auth, health, users
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 
@@ -11,3 +11,4 @@ register_exception_handlers(app)
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(auth.router, prefix=settings.api_v1_prefix)
 app.include_router(users.router, prefix=settings.api_v1_prefix)
+app.include_router(appointments.router, prefix=settings.api_v1_prefix)
