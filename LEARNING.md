@@ -55,6 +55,17 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"I set up the repo so that environment failures are impossible to confuse with application failures: versioned deps, validated compose healthchecks, env-config from `.env`, and linear git history via rebase + `--ff-only` merges — each commit is one reviewable unit."*
 - **Trap to avoid:** committing `.env` with real credentials "just for now" — the mistake that leaks secrets forever.
 
+### `2026-09-01 · M1` — User model + Alembic (schema versioning)
+
+- **What we did:** `alembic init --template async`, wired `env.py` to our settings + `Base.metadata`, added `User` model (role enum doctor/patient), `autogenerate` first migration, applied with `upgrade head`, verified with `psql \d users`.
+- **Observed (naive setup):** `Base.metadata.create_all()` is the beginner path — it creates missing tables but is **blind to existing schemas**: no versioning, no downgrade, no audit trail. We did not take that path; we documented it instead.
+- **Lesson 1 — Alembic = schema history as code:** `alembic_version` table stores the current revision; migrations are replayable, ordered, reviewable diffs. Same discipline as app code versioning.
+- **Lesson 2 — autogenerate ≠ trusted output:** Alembic detected table + indexes correctly, but review each file — it can miss renames/constraint details. We read `c3726ca5d8b0` before applying.
+- **Lesson 3 — sync vs async drivers:** Alembic runs *sync* by default; the `async` template + `async_engine_from_config` keeps us on one driver (asyncpg) with `asyncio.run`.
+- **Lesson 4 — `str`-enum stores by NAME:** `Enum(UserRole)` wrote PG labels `DOCTOR/PATIENT` (the enum member *names*), not values `doctor/patient`. Consistent round-trip (Python `UserRole.DOCTOR` <-> PG `'DOCTOR'`), but if you expect lowercase in the DB you need `values_callable=lambda e: [m.value for m in e]`.
+- **Interview answer:** *"Schema changes are code. I version them with Alembic — each revision is a reversible diff, the DB records where it is, and deployments run `upgrade head` from version A to D deterministically. Never `create_all` in production because it can't evolve a live schema."*
+- **Trap to avoid:** "Autogenerate wrote it, so it must be right." It's a starting draft — the base/`downgrade`/indexes need a human eye.
+
 ---
 
 ## M4 — Real-time chat — INTERVIEW FILE (placeholder to be filled when we reach it)

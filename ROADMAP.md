@@ -29,8 +29,8 @@ Where we are in the plan — each milestone is one learning loop. We update this
 **Learning 0:** sync vs async in one app; sync DB call inside async endpoint = first deliberate mistake.
 
 - [x] Project skeleton: `app/` package, settings, routers, database module
-- [ ] Docker stack up: postgres + redis (+ rabbitmq later)
-- [ ] SQLAlchemy async + Alembic migrations wired
+- [x] Docker stack up: postgres + redis (+ rabbitmq later) — all healthy
+- [x] SQLAlchemy async + Alembic migrations wired — User model, first migration applied
 - [ ] Signup/login (doctor + patient), JWT auth
 - [ ] **Naive:** sync `Session` in async endpoint → observe event-loop blocking
 - [ ] **Fix:** `AsyncSession` dependency injection; `SELECT`, `INSERT`, optimistic locking basics
@@ -153,3 +153,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 |------|-----------|-----------|--------|
 | 2026-09-01 | M0 | Docs scaffolded | ✅ |
 | 2026-09-01 | M0/M1 | git init, docker compose stack (postgres/redis/rabbitmq), FastAPI + async DB skeleton | ✅ |
+| 2026-09-01 | M1 | User model + Alembic async migrations (first migration applied, psql verified) | ✅ |
