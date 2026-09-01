@@ -86,6 +86,7 @@ async def create_appointment(
 async def list_appointments(
     page: int = 1,
     per_page: int = 20,
+    status_filter: AppointmentStatus | None = None,
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[list[AppointmentResponse]]:
@@ -96,16 +97,19 @@ async def list_appointments(
         Appointment.patient_id == current_user.id,
         Appointment.doctor_id == current_user.id,
     )
+    filters = [owned]
+    if status_filter is not None:
+        filters.append(Appointment.status == status_filter)
     total = (
         await db.execute(
-            select(func.count()).select_from(Appointment).where(owned)
+            select(func.count()).select_from(Appointment).where(*filters)
         )
     ).scalar_one()
     rows = (
         await db.execute(
             select(Appointment)
             .options(selectinload(Appointment.patient), selectinload(Appointment.doctor))
-            .where(owned)
+            .where(*filters)
             .order_by(Appointment.scheduled_at.desc())
             .limit(per_page)
             .offset((page - 1) * per_page)
@@ -148,9 +152,27 @@ async def cancel_appointment(
     db: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[AppointmentResponse]:
-    # NAIVE (see scripts/observe_cancel.py): anyone authenticated cancels,
-    # any transition is allowed, no idempotency semantics.
     appt = await _get_appointment(db, appointment_id)
+
+    # Authz: only the two participants may act on the record.
+    if current_user.id not in (appt.patient_id, appt.doctor_id):
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="NOT_PARTICIPANT",
+            message="only participants may cancel this appointment",
+        )
+
+    # Transition guard + idempotency: already-cancelled -> no-op success
+    # (cancel is idempotent); completed -> genuine conflict (can't rewrite history).
+    if appt.status == AppointmentStatus.CANCELLED:
+        return ApiResponse(data=_response(appt))
+    if appt.status == AppointmentStatus.COMPLETED:
+        raise CardicheckError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="INVALID_TRANSITION",
+            message="a completed appointment cannot be cancelled",
+        )
+
     appt.status = AppointmentStatus.CANCELLED
     await db.commit()
     await db.refresh(appt)
