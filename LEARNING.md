@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (7 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination)
+- **M1 — Auth & CRUD** (8 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -118,6 +118,15 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"I define one response envelope — success data plus an error object with a stable code, human message, and structured details — and enforce it at the edges with FastAPI exception handlers, so route handlers stay clean and every failure path (validation, not-found, domain conflicts, crashes) serializes identically. Codes, not freeform 'detail' strings, are the machine contract; messages are for humans."*
 - **Trap to avoid:** "Errors are fine as `{'detail': '...'}`" — with that, upgrading any client or adding an SDK means touching every endpoint; and leaking raw `str(exc)` to clients in prod is a security hole, not a convenience.
 - **Amendment — scripts must unwrap the envelope:** introducing the envelope silently broke the Bruno var-capture scripts — `res.getBody().email` became `undefined` because payloads moved under `.data` (asserts survived: `contains` is serialized-text matching, var extraction is structural). Every post-response script now reads `res.getBody().data.<field>`. Lesson: response-shape changes are client-contract changes — every consumer (SDK, scripts, asserts, docs) must be re-checked, and structural consumers (var capture) break first.
+
+### `2026-09-01 · M1` — rule: Bruno collections stay in lockstep with the API
+
+- **What we did:** Codified a standing rule in `AGENTS.md` §5 ("Collection freshness rule"): any endpoint change — response shape, status codes, payload fields, auth, pagination — ships with its `.bru` examples updated in the same increment; var-capture scripts unwrap the envelope; re-run affected examples or `scripts/observe_*.py` before merging. Triggered directly by the envelope incident above (three post-response scripts captured `undefined` while asserts still passed).
+- **Observed problem:** the envelope refactor merged with stale `.bru` scripts; the failures were silent (string-based asserts can't see a missing field a script expected) and only surfaced as 401s in the Protected flow.
+- **Lesson:** asserts and capture scripts are *both* consumers of the response contract, with different blind spots — asserts check serialized text, scripts do structural extraction. "Tests pass" ⇒ "API still matches the collection" is not implied. The collection IS a client SDK; treat it like one during reviews and migrations.
+- **Fix / best practice:** update Bruno in the same increment as the code that changes the contract; consciously re-check BOTH asserts and post-response `res.getBody().data` extraction; run the affected examples / observe scripts as part of the merge checklist.
+- **Interview answer:** *"Our API test collection is versioned and lives with the code. When a response shape changes, I update the matching Bruno examples in the same commit — because a stale example is a broken client contract, not a cosmetic doc. The tricky part is that asserts do text matching, so they can pass while variable-capture scripts silently break; I re-check both and re-run the affected requests before merging."*
+- **Trap to avoid:** "The asserts still pass, so we're fine." — asserts and scripts have complementary blind spots; a change that passes all asserts can still ship a broken collection.
 
 ### `2026-09-01 · M1` — appointments CRUD: N+1 queries + pagination
 
