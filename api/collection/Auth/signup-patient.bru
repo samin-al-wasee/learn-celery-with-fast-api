@@ -1,0 +1,26 @@
+meta {
+  name: Signup Patient
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/signup
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "jane.patient@cardicheck.io",
+    "password": "supersecret1",
+    "full_name": "Jane Patient",
+    "role": "patient"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body: contains "id"
+  res.body: contains "patient"
+}

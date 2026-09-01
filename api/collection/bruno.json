@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Cardicheck API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}
