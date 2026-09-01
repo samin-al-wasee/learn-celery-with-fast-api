@@ -23,7 +23,14 @@ assert {
   res.body: contains "bearer"
 }
 
+script:pre-request {
+  // Always start empty: never let a stale/expired token leak into a new login
+  // attempt, and if this login fails the protected tree gets no token at all.
+  bru.setVar('access_token', '');
+}
+
 script:post-response {
+  if (res.status !== 200) return;
   const data = res.getBody();
   bru.setVar('access_token', data.access_token);
 }
