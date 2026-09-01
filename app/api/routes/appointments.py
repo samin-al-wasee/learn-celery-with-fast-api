@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_user
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
-from app.models import Appointment, User, UserRole
+from app.models import Appointment, AppointmentStatus, User, UserRole
 from app.schemas.appointments import AppointmentCreate, AppointmentResponse, UserBrief
 from app.schemas.envelope import ApiResponse
 
@@ -123,3 +123,35 @@ async def list_appointments(
             }
         },
     )
+
+
+async def _get_appointment(db: AsyncSession, appointment_id: int) -> Appointment:
+    appt = (
+        await db.execute(
+            select(Appointment)
+            .options(selectinload(Appointment.patient), selectinload(Appointment.doctor))
+            .where(Appointment.id == appointment_id)
+        )
+    ).scalar_one_or_none()
+    if appt is None:
+        raise CardicheckError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="APPOINTMENT_NOT_FOUND",
+            message="appointment not found",
+        )
+    return appt
+
+
+@router.post("/{appointment_id}/cancel", response_model=ApiResponse[AppointmentResponse])
+async def cancel_appointment(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[AppointmentResponse]:
+    # NAIVE (see scripts/observe_cancel.py): anyone authenticated cancels,
+    # any transition is allowed, no idempotency semantics.
+    appt = await _get_appointment(db, appointment_id)
+    appt.status = AppointmentStatus.CANCELLED
+    await db.commit()
+    await db.refresh(appt)
+    return ApiResponse(data=_response(appt))
