@@ -31,12 +31,12 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Project skeleton: `app/` package, settings, routers, database module
 - [x] Docker stack up: postgres + redis (+ rabbitmq later) — all healthy
 - [x] SQLAlchemy async + Alembic migrations wired — User model, first migration applied
-- [ ] Signup/login (doctor + patient), JWT auth
-- [ ] **Naive:** sync `Session` in async endpoint → observe event-loop blocking
-- [ ] **Fix:** `AsyncSession` dependency injection; `SELECT`, `INSERT`, optimistic locking basics
+- [ ] Signup (✅ done) / **Login + JWT** — next increment
+- [x] **Naive:** sync `Session` in async endpoint → observe event-loop blocking — probe blocked ~1085ms
+- [x] **Fix:** `AsyncSession` dependency injection — probe ~24ms, loop free
 - [ ] CRUD for profiles / appointments / medical records (fictional data only)
 - [ ] Pydantic validation, consistent response envelope, error handling
-- [ ] LEARNING.md log + interview section for "sync-in-async pitfall" and ORM-session lifecycle
+- [x] LEARNING.md log + interview section for "sync-in-async pitfall" — ✔ entry added
 
 ---
 

@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (placeholders below)
-- **M1 — Auth & CRUD** (empty — add entries)
+- **M1 — Auth & CRUD** (2 entries: alembic, sync-in-async)
 - **M2 — Caching with Redis** (empty)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -65,6 +65,17 @@ Keep it as bullets, not essays.
 - **Lesson 4 — `str`-enum stores by NAME:** `Enum(UserRole)` wrote PG labels `DOCTOR/PATIENT` (the enum member *names*), not values `doctor/patient`. Consistent round-trip (Python `UserRole.DOCTOR` <-> PG `'DOCTOR'`), but if you expect lowercase in the DB you need `values_callable=lambda e: [m.value for m in e]`.
 - **Interview answer:** *"Schema changes are code. I version them with Alembic — each revision is a reversible diff, the DB records where it is, and deployments run `upgrade head` from version A to D deterministically. Never `create_all` in production because it can't evolve a live schema."*
 - **Trap to avoid:** "Autogenerate wrote it, so it must be right." It's a starting draft — the base/`downgrade`/indexes need a human eye.
+
+### `2026-09-01 · M1` — sync-in-async: the blocking event loop
+
+- **What we did:** Built signup the **naive** way (deliberate): a sync psycopg session + `time.sleep(2)` inside the `async def` handler (see git history `44d0dc6`). Observed the damage with `scripts/observe_blocking.py`, then refactored to `AsyncSession` via DI (`1fcf0ac`).
+- **Observed (naive):** a **health probe issued at t=1s completed at t+2085ms — blocked ~1085ms** behind the signup's `sleep(2)`; a second signup request was serialized too (t+4214ms). One slow request stalled unrelated traffic.
+- **Observed (fixed):** same script → signup t+107ms, probe at t=1s completes t+1024ms (~24ms — the loop stayed free), dup → clean 409.
+- **Lesson:** `async def` gives **concurrency, not parallelism**. All coroutines share ONE event-loop thread; any blocking call (`time.sleep`, sync DB driver, `requests.get`, heavy CPU) stalls **every** in-flight request — not just this one. Concurrency is cooperative: you must `await` to yield.
+- **Fix / best practice:** async driver (asyncpg) + `AsyncSession` provided by `Depends(get_db_session)` (`app/core/database.py:22`); every I/O `await`ed. `expire_on_commit=False` keeps attributes usable after commit.
+- **Why this matters later:** this exact failure is why heavy work gets moved to workers/tasks (M3 Celery) — a task *never* holds the request path hostage.
+- **Interview answer:** *"In FastAPI/uvicorn an async endpoint is one task on one event-loop thread. Blocking I/O inside it freezes the whole server — a `time.sleep` or sync driver call doesn't just slow one request, it serializes all of them. So we use async drivers (asyncpg) and `await` every DB call; truly expensive or fire-and-forget work goes to a background task worker, not the request thread."*
+- **Trap to avoid:** "'It's an async endpoint, so it's fine.'" — async signature ≠ non-blocking body. Also `run_in_threadpool` as a reflex: it hides blocking in the default threadpool, which *also* saturates under load.
 
 ---
 
