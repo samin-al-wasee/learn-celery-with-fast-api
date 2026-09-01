@@ -11,6 +11,9 @@ post {
 }
 
 script:pre-request {
+  // Scheduled_at must be in the future; compute +1h so the example never
+  // trips the PAST_SCHEDULED_AT check. (Bruno's var panel keeps re-pinning
+  // vars:pre-request { appt_at: 7 } — remove it if it reappears.)
   const d = new Date(Date.now() + 60 * 60 * 1000);
   bru.setVar('appt_at', d.toISOString());
 }
