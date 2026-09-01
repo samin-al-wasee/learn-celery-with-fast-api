@@ -44,23 +44,23 @@ async def main() -> None:
         rid = r.json()["data"]["id"]
         print(f"doc creates record           : 201 id={rid}")
 
-        code, body = await c.get(f"/api/v1/records/{rid}", headers=hpb)
-        print(f"patient B reads pa's record  : {code}  (WANT 403 fixed; naive leaks)")
+        r = await c.get(f"/api/v1/records/{rid}", headers=hpb)
+        print(f"patient B reads pa's record  : {r.status_code}  (WANT 403 fixed; naive leaks)")
 
-        code, body = await c.patch(f"/api/v1/records/{rid}", json={"title": "Updated Title"}, headers=h)
-        notes_after = body["data"]["notes"] if code == 200 else "n/a"
-        print(f"doc PATCH only title         : {code}  notes={notes_after!r}  (WANT kept fixed; naive wipes)")
+        r = await c.patch(f"/api/v1/records/{rid}", json={"title": "Updated Title"}, headers=h)
+        notes_after = r.json()["data"]["notes"] if r.status_code == 200 else "n/a"
+        print(f"doc PATCH only title         : {r.status_code}  notes={notes_after!r}  (WANT kept fixed; naive wipes)")
 
-        code, body = await c.patch(f"/api/v1/records/{rid}", json={"notes": "Refined after ECG."}, headers=hpa)
-        print(f"patient A tries PATCH        : {code}  (WANT 403 fixed; naive grants)")
+        r = await c.patch(f"/api/v1/records/{rid}", json={"notes": "Refined after ECG."}, headers=hpa)
+        print(f"patient A tries PATCH        : {r.status_code}  (WANT 403 fixed; naive grants)")
 
-        code, body = await c.delete(f"/api/v1/records/{rid}", headers=hpa)
-        print(f"patient A tries DELETE       : {code}  (WANT 403 fixed; naive grants)")
+        r = await c.delete(f"/api/v1/records/{rid}", headers=hpa)
+        print(f"patient A tries DELETE       : {r.status_code}  (WANT 403 fixed; naive grants)")
 
-        code, body = await c.delete(f"/api/v1/records/{rid}", headers=h)
-        print(f"doc deletes own record       : {code}")
-        code, _ = await c.get(f"/api/v1/records/{rid}", headers=h)
-        print(f"GET after delete             : {code}  (WANT 404)")
+        r = await c.delete(f"/api/v1/records/{rid}", headers=h)
+        print(f"doc deletes own record       : {r.status_code}")
+        r = await c.get(f"/api/v1/records/{rid}", headers=h)
+        print(f"GET after delete             : {r.status_code}  (WANT 404)")
 
 
 if __name__ == "__main__":
