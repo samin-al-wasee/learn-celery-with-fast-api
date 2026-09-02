@@ -25,7 +25,7 @@ Keep it as bullets, not essays.
 
 - **M0 — Foundation** (placeholders below)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
-- **M2 — Caching with Redis** (empty)
+- **M2 — Caching with Redis** (1 entry: in-process-dict vs redis read-through + invalidation; stampede note deferred)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
@@ -183,6 +183,38 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** `ConfigDict(str_strip_whitespace=True)` + `min_length=1` so whitespace-only fails; role conditional via `model_validator(mode="after")`; lead time as handler check (`<= now + 15 min → 400`); error serialization sanitized centrally in `errors.py`.
 - **Interview answer:** *"Validation splits into two layers: static shape in Pydantic — formats, lengths, `Literal` value sets, role-conditional fields — which surfaces as 422 with zero handler code; and state/time rules in the handler — lead time, transitions, ownership — surfacing as 400/409. And I learned the hard way to sanitize Pydantic's `ctx` before rendering errors, because the error handler itself must never crash."*
 - **Trap to avoid:** trusting `min_length` to catch blank strings (whitespace passes) — combine with `str_strip_whitespace`; and echoing `exc.errors()` into the response envelope without making it JSON-safe.
+
+---
+
+## M2 — Caching with Redis
+
+### `2026-09-02 · M2` — caching: in-process dict vs Redis read-through + write-invalidation
+
+- **What we did:** Added a Redis client (`app/core/redis.py`) + `REDIS_URL`/`CACHE_TTL_SECONDS` (config + `.env.example`) + `redis>=5.0`. **Naive** cache on `GET /users/me` = a module-level `dict[int, (timestamp, profile)]` with a `time.monotonic()` TTL. Observed with `scripts/observe_cache.py`, then **fixed**: Redis **read-through** on the hot read + **delete-on-write invalidation** on `PATCH /users/me` (`app/api/routes/users.py`).
+- **Observed (naive, deterministic):** `GET /users/me` caches "Cache Doctor" → `PATCH` renames to "Renamed Doctor" → next `GET /users/me` **still serves "Cache Doctor"** — stale data served from the in-process dict. The TTL of 60s would have hidden it for a minute; nothing in the write path touched the dict.
+- **Observed (fixed):** cold miss ~**26ms** (Redis miss → DB → serialize → cache), warm hit ~**5ms** (no DB re-read); after `PATCH`, the key is deleted (`exists=False`), so the next `GET` refetches fresh "Renamed Doctor" and read-through re-caches it.
+- **Lesson 1 — a process-local cache is not a cache, it's a lie:** each uvicorn worker / each deploy owns a *private* dict. It's not shared across workers, and a restart wipes it cold. So under `--workers N` or any rolling deploy the "cache" both diverges per process *and* serves stale data written by a different process. A cache only means something when every request path — any worker — reads the same store (Redis).
+- **Lesson 2 — read caching implies write invalidation, and it's your job:** the naive dict was read-write to *nothing*. A writer that doesn't purge the cache guarantees stale reads up to TTL. Best practice here is **delete-on-write** (`cache_delete` after commit): cache-aside is "write to DB, *invalidate* cache", not "write to both" — writing to both double-maintains data and risks divergence; deleting is simpler and always correct (next read lazily refetches). *Caveat:* now every read after a write is a cache miss until refilled (the "cache miss storm" morsel that becomes the stampede lesson).
+- **Lesson 3 — honest cost framing:** the hit-vs-miss delta (~5ms vs ~26ms) is meaningful but *shaved down* here by design: `get_current_user` re-reads the user by PK on every request (M1 revocation design). We deliberately cache the *profile payload*, not the auth read. In a real hot-read with a heavier query (a doctor roster, chat-history cursor), the delta is far larger — the mechanism is the teachable part, the absolute numbers are fixture-specific.
+- **Lesson 4 — serialization & off-loop:** store JSON (`model_dump(mode="json")`), `decode_responses=True` so we get dicts back, TTL from config. `redis-py`'s client is **sync** — every call is delegated via `run_in_threadpool` (`app/core/redis.py`), never run on the async loop, matching the M1 lesson.
+- **Deferred (next M2 increment):** **cache stampede / thundering herd** — at TTL expiry, if N readers all miss simultaneously they all hit the DB, and the cache *amplifies* load instead of absorbing it. Options noted for later: single-flight request coalescing (one in-flight load, others await it) and/or a lock/`SET NX` around refill, plus TTL jitter. Documented here so we don't repeat it blind.
+- **Interview answer:** *"Caching only works if it's shared — an in-process dict is a per-worker lie that serves stale data across restarts and rollouts. We use Redis with a read-through pattern: miss → load from DB → cache with TTL, hit → serve cache. Critically, every writer must invalidate the key (delete-on-write, not write-both), otherwise reads go stale until TTL. The trap is the stampede — at expiry all concurrent misses hit the DB at once, so you plan single-flight or locking around refill."*
+- **Trap to avoid:** *"I'll cache every read and write through to the cache too so it stays fresh"* — double-writing the cache and DB splits your source of truth and diverges; and *"it's fine, Redis is fast"* without thinking about the stampede that a hot expiring key triggers.
+
+---
+
+## M2 — Caching — INTERVIEW FILE
+
+**Q1: When would you use a cache, and when is it a trap?**
+> I add a cache when a read is hot and expensive — called many times, cheap-ish to serve, and tolerable to serve slightly stale (profile hits, leaderboards, reference lookups). It's a trap when the data must be immediately consistent (account balance, appointment state) or when the read is rarely called — a cache adds a second system and two failure modes (staleness, stampede) for no win.
+
+**Q2: How do you keep the cache consistent with the database?**
+> Two halves. Writes invalidate (delete-on-write) so the next read lazily refetches — I never write both DB and cache, that diverges. Reads use read-through: hit serves, miss loads from the DB and stores with a TTL. TTL is the fallback time-bomb for paths I forgot to invalidate; it bounds staleness but also creates the stampede.
+
+**Q3: What is a cache stampede and how do you stop it?**
+> When a hot key expires, many concurrent readers all miss and each fires its own DB query — the cache turns one expected miss into N, spiking the DB exactly at the worst moment. Mitigations: single-flight (coalesce concurrent misses into one in-flight load), a lock/`SET NX` so only one refills, and TTL jitter so keys don't expire in lockstep.
+
+**Trap answer to avoid:** *"The cache is just `if in dict: return; else: fetch; put in dict`"* — that's a per-process stale lie that ignores sharing and invalidations; and *"I'll just set a short TTL, problem solved"* — short TTL only shrinks (doesn't remove) the stale/expiry window and can *increase* stampede frequency.
 
 ---
 

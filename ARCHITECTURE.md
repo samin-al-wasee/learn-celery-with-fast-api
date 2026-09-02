@@ -110,6 +110,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 - Primary store: PostgreSQL (strong consistency, ACID for core medical-ish data).
 - Cache + pub/sub: Redis (best effort, TTL'd, eventual, invalidation via events where possible).
 - After M5 we'll document our exact tradeoff: for latency-sensitive reads we accept stale-by-TTL; for correctness (appointments, medications) we always read-through.
+- **Current (M2):** profile reads are read-through cached in Redis (`profile:{user_id}`, TTL = `CACHE_TTL_SECONDS`), invalidated on write (`PATCH /users/me` deletes the key). Accepts: every cached read is stale-by-TTL after a write *until* the next write invalidates — mismatch resolved by delete-on-write, so a write always forces the next read to refetch fresh.
 
 ### Messaging model (after M3)
 - **Command/job queue (Celery):** durable, acked, retried — for work the system must complete.
@@ -134,6 +135,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-01 | Redis as result backend | — | Results are ephemeral; Redis eviction model matches "store last N results" reality |
 | 2026-09-01 | Postgres as source of truth even for chat history | Redis for history | Redis is memory-bound; history must be durable, cursor-paged; Redis cache on top (M2 merge) |
 | 2026-09-01 | WebRTC (P2P→SFU) for calls in M7 | Prebuilt SDK | P2P→SFU is the classic interview narrative; forces real-time reasoning |
+| 2026-09-02 | Redis as the shared cache (read-through) | In-process dict (M1/M2 naive) | A cache must be shared across workers and survive restarts to mean anything; otherwise it silently serves stale, per-process data. Sync `redis-py` calls are delegated to the threadpool (never the loop). |
 
 *(Every later milestone appends here with a BECAUSE.)*
 
