@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.cache import get_db_fetch_count, read_through
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
-from app.core.redis import cache_delete, cache_get, cache_set
+from app.core.redis import cache_delete
 from app.models import User, UserRole
 from app.schemas.envelope import ApiResponse
 from app.schemas.users import ProfileResponse, ProfileUpdate
@@ -12,7 +14,7 @@ from app.schemas.users import ProfileResponse, ProfileUpdate
 router = APIRouter(prefix="/users", tags=["users"])
 
 # M2! Redis read-through cache on the hot profile read.
-# - Read path: GET /users/me -> Redis miss -> build from DB -> cache with TTL.
+# - Read path: GET /users/me -> read_through (Redis miss -> DB -> cache).
 # - Write path: PATCH /users/me -> delete the key (delete-over-update).
 PROFILE_KEY = "profile:{user_id}"
 
@@ -29,13 +31,25 @@ def _profile(user: User) -> ProfileResponse:
 
 
 @router.get("/me", response_model=ApiResponse[ProfileResponse])
-async def get_me(current_user: User = Depends(get_current_user)) -> ApiResponse[ProfileResponse]:
+async def get_me(
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[ProfileResponse]:
     key = PROFILE_KEY.format(user_id=current_user.id)
-    cached = await cache_get(key)
-    if cached is not None:
-        return ApiResponse(data=cached)
-    data = _profile(current_user).model_dump(mode="json")
-    await cache_set(key, data)
+
+    # The loader is the *expensive read the cache protects*: a real DB select.
+    # (Making it a genuine I/O read is what lets us observe a stampede.)
+    async def load_profile() -> dict:
+        row = (
+            await db.execute(select(User).where(User.id == current_user.id))
+        ).scalar_one()
+        return _profile(row).model_dump(mode="json")
+
+    data, _was_miss = await read_through(key, load_profile)
+    # M2 observability: expose the DB-fetch (miss) counter so observe_stampede.py
+    # can measure how many readers hit the datastore in a concurrent burst.
+    response.headers["X-Cache-Miss-Count"] = str(get_db_fetch_count())
     return ApiResponse(data=data)
 
 
