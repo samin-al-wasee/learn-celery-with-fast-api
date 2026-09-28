@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency, reminders (beat) done.** Next up: M3 observability (task state, result backend, Flower), then async flows (PDF export).
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency, reminders (beat), export jobs done.** Next up: M3 observability (Flower, queue depth), then M4 real-time chat.
 
 ---
 
@@ -79,10 +79,11 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Celery app + worker + RabbitMQ broker: `acks_late` + retries → worker killed mid-send 10/10, flaky 10/10 ✅ (result backend deferred: separate Redis, see ARCHITECTURE)
 - [x] Idempotency: worker killed after send, before ack → 9 duplicate emails → provider-side idempotency key `welcome-{user_id}` → 0 duplicates (9 dedup hits) ✅
 - [x] Chore: Bruno collection runs headless — field-level asserts, 4 malformed JSON bodies fixed, confirm→cancel order; 15/15 requests, 49/49 asserts; `verify.ps1 -Bruno` ✅
-- [ ] Async no-blocking flows: notifications, PDF/export generation, reminders
+- [x] Async no-blocking flows: notifications (welcome email) ✅, reminders ✅, records CSV export (202 + job status + download) ✅
 - [x] Task modeling: retries + backoff ✅, idempotency ✅, ETA/countdown ✅ — long-ETA reminders crashed the worker (consumer_timeout) and reminded a cancelled appointment → beat DB scan
 - [x] `beat` = scheduled jobs: `send_due_reminders` scan (SKIP LOCKED, `reminder_sent_at`, key includes `scheduled_at`) ✅
-- [ ] Observability: flower or similar; task state/tracebacks
+- [x] Task state: naive `AsyncResult` over the cache Redis (unknown id → PENDING, IDOR, eviction → PENDING) → `export_jobs` table, owner-only 404s ✅
+- [ ] Observability: Flower / task events, tracebacks, queue depth
 - [ ] LEARNING.md log + interview section (Celery architecture, broker vs backend, retries, idempotency, ETA)
 
 ---
@@ -191,3 +192,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M3 | Idempotency: worker killed between provider accept and ack → 9/10 duplicate emails → provider-enforced key `welcome-{user_id}` (exclusive create) → 0 duplicates, 9 dedup hits | ✅ |
 | 2026-09-28 | M1 | Bruno collection as contract: CLI run exposed substring asserts invalid in CLI 4.2.0, 4 malformed JSON bodies (422), cancel-before-confirm order → field asserts, fixed bodies/order (15/15, 49/49) + `verify.ps1 -Bruno` | ✅ |
 | 2026-09-28 | M3 | Reminders: naive long-ETA tasks (worker crashed on consumer_timeout, 0/3 sent; with 30 min timeout the cancelled appointment was reminded and the rescheduled one got the stale time) → `reminder_sent_at` migration + beat scan with SKIP LOCKED + scheduled_at-keyed idempotency (A/B/C all correct) + reschedule Bruno example | ✅ |
+| 2026-09-28 | M3 | Export jobs: naive AsyncResult status on the cache Redis (unknown id → 200 PENDING, other user read result, eviction → PENDING) → `export_jobs` table (migration `cdac0e353a2c`, enum downgrade fixed) + 202/Location + owner-only 404 + download; Bruno 20/20 | ✅ |

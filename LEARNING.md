@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan) + interview file
+- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -321,6 +321,19 @@ Keep it as bullets, not essays.
 - **Trade-offs:** reminders are late by up to one scan interval (60s default); beat must run as exactly one process (two beats just double the scans, which SKIP LOCKED + keys tolerate). The scan sends inline, so one slow provider call delays the batch; fan-out to per-reminder tasks is the next step if volume grows.
 - **Interview answer:** *"For reminders days out I don't schedule a Celery task with a long ETA: the message freezes booking-time data, so cancels and reschedules are ignored, and on RabbitMQ the worker holds ETA messages unacked in memory, which trips the consumer timeout. Instead I store the state in the database and run a periodic beat task that selects due rows with SKIP LOCKED, sends with an idempotency key, and marks them sent. The database stays the source of truth and the queue only carries short-lived work."*
 - **Trap to avoid:** *"I'll revoke the ETA task when the appointment is cancelled"*: revokes are held in worker memory, get lost on restart, and don't handle reschedules. Also avoid *"ETA tasks are stored in the broker until they're due"*: with Celery on RabbitMQ they're delivered immediately and parked in the worker.
+
+### `2026-09-28 · M3` — async job status: Celery result backend → `export_jobs` table
+
+- **What we did:** Async CSV export of the caller's medical records. **Naive:** `POST /records/export` returns the Celery task id as the job id; `GET /exports/{id}` returns `AsyncResult(id).state` + `.result`; result backend = the existing cache Redis (`REDIS_URL`). **Fix:** `export_jobs` table (migration `cdac0e353a2c`: UUID id, `user_id`, status `queued → running → succeeded | failed`, `row_count`, `file_path`, `error`); `app/api/routes/exports.py` returns `202` + `Location`, owner-only reads (404 otherwise), `GET /exports/{id}/download` (409 until finished); the worker task `export_records(job_id)` updates the row via `run_db`; the result backend is removed again. Observed with `scripts/observe_exports.py`.
+- **Observed (naive):** made-up job id → **200 `PENDING`**; a second patient reading the owner's job id → **200 `SUCCESS`, `rows: 3`, and the file path** (IDOR on health data); after filling the cache Redis (300 evictions) the owner's *finished* job → **`PENDING`** again.
+- **Observed (fixed):** unknown id → **404 `EXPORT_NOT_FOUND`**; other user → **404**, nothing leaked; after 300 evictions → still **`succeeded`**. Bruno: new `Protected/Exports/*` (request → get → download → unknown-id 404); collection 20/20 requests, 68/68 asserts.
+- **Lesson 1 — `PENDING` means "I don't know":** Celery reports `PENDING` for any id it has no record of: never existed, not started yet, expired (`result_expires`, 1 day default), or evicted. A status API built on it can't tell a queued job from a typo or a lost result.
+- **Lesson 2 — the result backend is task plumbing, not application state:** it has no owner, no authorization, a TTL, and here it shared an evicting cache. Anything a user sees (job status, progress, download link) is app state → a row in the DB with an owner and explicit transitions. Keep the result backend for Celery's own needs (chords, `.get()` in scripts), on a non-evicting store.
+- **Lesson 3 — 404, not 403, for other people's jobs:** a 403 confirms the id exists. Unguessable UUIDs help, but the owner filter in the query is the actual control.
+- **Lesson 4 — autogenerate misses Postgres enum types on downgrade:** upgrade → downgrade → upgrade failed with `DuplicateObjectError: type "export_status" already exists`; the downgrade now drops the type. Always round-trip a new migration.
+- **Trade-offs:** one extra DB write per state change and a table to clean up (retention job later); the enqueue-after-commit gap remains, but now it's visible: an enqueue failure marks the job `failed` instead of leaving it `queued` forever.
+- **Interview answer:** *"For a user-facing async job I return 202 with a job id and a Location header, and store the job in my own database with an owner and explicit states that the worker updates. I don't expose Celery's AsyncResult: it reports PENDING for anything it doesn't know, results expire, it has no notion of ownership, and if the backend evicts you lose finished jobs. Reads are filtered by owner and return 404 for anything else."*
+- **Trap to avoid:** *"Just return the task id and let the client poll AsyncResult"*: that's an unauthenticated window into every task's result, and `PENDING` hides typos, expiry and eviction.
 
 ---
 

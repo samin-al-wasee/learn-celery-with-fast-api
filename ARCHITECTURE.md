@@ -63,7 +63,7 @@ Client ──▶ FastAPI (one process) ──▶ Postgres
 ### Phase 2 — Async-first monolith (M3, in progress)
 Introduce Celery worker + RabbitMQ broker + Redis result backend.
 
-**Current (M3):** `POST /auth/signup` enqueues `send_welcome_email` (`app/worker/tasks.py`) on RabbitMQ; workers run with `acks_late` + `reject_on_worker_lost` + prefetch 1 (at-least-once), autoretry with exponential backoff + jitter. No result backend yet (`task_ignore_result`). Reminders are **not** ETA tasks: celery **beat** runs `send_due_reminders` every `REMINDER_SCAN_SECONDS`, which reads due appointments from Postgres (`reminder_sent_at IS NULL`, `FOR UPDATE SKIP LOCKED`), sends with key `reminder-{id}-{scheduled_at}`, and marks them; reschedule clears the marker. Side effects carry an idempotency key from the business event (`welcome-{user_id}`) that the provider enforces, so redelivery can't double-send. Known gap: publish happens after the DB commit, so a broker outage loses the job (logged, not retried) → transactional outbox in M6.
+**Current (M3):** `POST /auth/signup` enqueues `send_welcome_email` (`app/worker/tasks.py`) on RabbitMQ; workers run with `acks_late` + `reject_on_worker_lost` + prefetch 1 (at-least-once), autoretry with exponential backoff + jitter. No result backend yet (`task_ignore_result`). User-facing job status lives in Postgres (`export_jobs`: owner, `queued → running → succeeded | failed`), never in Celery's result backend. Reminders are **not** ETA tasks: celery **beat** runs `send_due_reminders` every `REMINDER_SCAN_SECONDS`, which reads due appointments from Postgres (`reminder_sent_at IS NULL`, `FOR UPDATE SKIP LOCKED`), sends with key `reminder-{id}-{scheduled_at}`, and marks them; reschedule clears the marker. Side effects carry an idempotency key from the business event (`welcome-{user_id}`) that the provider enforces, so redelivery can't double-send. Known gap: publish happens after the DB commit, so a broker outage loses the job (logged, not retried) → transactional outbox in M6.
 ```
                   ┌────────────────────────────┐
                   │  FastAPI  (request path)   │  ──▶ Postgres, Redis
@@ -142,6 +142,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 
 | 2026-09-28 | Celery tasks ack late (`acks_late`, `reject_on_worker_lost`, prefetch 1) with autoretry + backoff | Default early ack; threads in the API | A worker crash must redeliver, not drop, the job (observed 0/10 → 10/10). Cost: at-least-once, so tasks must be idempotent. |
 | 2026-09-28 | Scheduled work = beat + DB state scan; ETA/countdown only for short delays | Long-ETA Celery tasks per reminder | ETA messages freeze booking-time data and sit unacked in worker RAM, tripping RabbitMQ `consumer_timeout` (observed crash); the DB is the source of truth for what's due |
+| 2026-09-28 | Async job status in a DB table with owner + explicit states; no Celery result backend for app state | `AsyncResult(task_id).state` on Redis | Observed: unknown ids read as PENDING, any user could read any result, eviction turned a finished job back into PENDING. App state needs ownership and durability. |
 
 *(Every later milestone appends here with a BECAUSE.)*
 
