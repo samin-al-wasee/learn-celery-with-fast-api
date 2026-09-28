@@ -10,24 +10,21 @@ from pathlib import Path
 import pika  # type: ignore[import-untyped]
 
 from app.core.config import get_settings
+from app.events.rabbit import EXCHANGE, connection_params
 
 logger = logging.getLogger("notifications")
 
-EXCHANGE = "cardicheck.events"
 QUEUE = "notifications.appointments"
 ROUTING_KEY = "appointment.*"
 DLX = "cardicheck.dlx"
 DLQ = QUEUE + ".dlq"
 PREFETCH = 10
 
+__all__ = ["EXCHANGE", "QUEUE", "DLQ", "connection_params", "declare_topology", "main"]
+
 
 class PoisonMessage(Exception):
     pass
-
-
-def connection_params() -> pika.URLParameters:
-    # M5: Celery writes the default vhost as "//"; pika parses that as vhost "" (not "/").
-    return pika.URLParameters(get_settings().celery_broker_url.rstrip("/") + "/%2F")
 
 
 def declare_topology(ch: pika.adapters.blocking_connection.BlockingChannel) -> None:
