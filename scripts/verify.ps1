@@ -33,6 +33,7 @@ function Invoke-Checked([string]$exe, [string[]]$argv) {
     if ($LASTEXITCODE -ne 0) { throw "'$exe $($argv -join ' ')' exited $LASTEXITCODE" }
 }
 
+$env:PYTHONPATH = $root
 $python = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) { $python = "python" }
 
