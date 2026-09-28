@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # M2: cache / result backend. Sync redis client (used off the event loop).
     redis_url: str = "redis://localhost:6379/0"
     cache_ttl_seconds: int = 60
+    # M2: +-fraction of random TTL spread so keys filled together don't expire together.
+    cache_ttl_jitter: float = 0.1
 
     # DEV-ONLY fallback; never ship a real secret as a default.
     jwt_secret: str = "dev-secret-change-me"
