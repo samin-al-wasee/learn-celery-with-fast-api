@@ -68,6 +68,7 @@ celery -A app.worker.celery_app flower --port=5555              # Flower UI; aut
 python -m app.consumers.notifications                          # M5 pika consumer (appointment.* events)
 python -m app.events.relay                                     # M6 outbox relay (publishes outbox_events)
 uvicorn services.availability.main:app --port 8100                  # M6 availability service (booking degrades if down)
+uvicorn services.billing.main:app --port 8200                       # M6 fake billing provider (deposit saga)
 celery -A app.worker.celery_app beat --loglevel=info     # run the scheduler (reminder scan) — exactly one beat process
 ```
 
