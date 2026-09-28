@@ -25,7 +25,7 @@ Keep it as bullets, not essays.
 
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
-- **M2 — Caching with Redis** (2 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight)
+- **M2 — Caching with Redis** (3 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
@@ -223,6 +223,16 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"A cache stampede is when a hot key expires and N concurrent readers all miss and hit the datastore at once — the cache turns one expected miss into N and spikes the DB exactly when it's hottest. I fix it with single-flight: on a miss the first reader becomes the leader and loads once, while the others await that same in-flight load, so N misses cost one datastore call. The catch is that process-local single-flight only coalesces within one worker; across workers I'd need a distributed lock around the refill."*
 - **Trap to avoid:** *"Single-flight fixes the stampede everywhere"* — it's per-process, so multi-worker still storms the DB; and *"it's fine because my dev box is fast"* — the stampede is a load phenomenon that doesn't show on one worker, which is precisely why it bites in production.
 
+### `2026-09-28 · M2` — TTL strategy: synchronized expiry (expiry avalanche) → TTL jitter
+
+- **What we did:** `scripts/observe_ttl_jitter.py` warms 200 distinct keys concurrently through `read_through` (cold start / deploy / FLUSHALL shape), reads each key's `PTTL`, and buckets absolute expiry per second. Naive = the existing fixed `CACHE_TTL_SECONDS=60`. Fix = `jittered()` in `app/core/redis.py` applies `ttl × U(1−j, 1+j)` inside `cache_set`, `j = CACHE_TTL_JITTER` (default 0.1).
+- **Observed (naive):** 200 keys → **expiry window 1s, busiest second = 200 misses**. The fill pattern is copied onto the expiry pattern, and it repeats every TTL cycle.
+- **Observed (fixed, ±10%):** expiry window **13s**, busiest second **30** misses (~7× lower peak; random, so the exact number varies per run). Regression checks: `observe_stampede.py` still 20 misses → 1 load; `observe_cache.py` miss ~28ms / hit ~5.5ms / invalidation intact.
+- **Lesson:** a TTL is an *appointment* for a miss. A fixed TTL on keys written together books all their misses for the same instant, which is a herd across **many keys**. Single-flight only coalesces misses on **one** key, so it can't help; the two fixes are complementary.
+- **Fix / best practice:** randomize the TTL per write (jitter). It costs nothing and needs no coordination between workers. Wider jitter spreads load more but makes staleness less predictable, so we pick ±10%. Invalidation stays delete-on-write, so jitter never affects correctness after our own writes.
+- **Interview answer:** *"If many keys are cached at the same moment with the same TTL, they all expire at the same moment and the database eats a synchronized miss spike, repeating every TTL. I add random jitter to each TTL so expiries spread out. Single-flight handles many readers of one key; jitter handles many keys expiring together; a lock handles the cross-worker case."*
+- **Trap to avoid:** *"Just make the TTL longer"*: that only delays the same spike and makes data staler. Also avoid claiming single-flight covers this: it's per-key.
+
 ---
 
 ## M2 — Caching — INTERVIEW FILE
@@ -234,7 +244,7 @@ Keep it as bullets, not essays.
 > Two halves. Writes invalidate (delete-on-write) so the next read lazily refetches — I never write both DB and cache, that diverges. Reads use read-through: hit serves, miss loads from the DB and stores with a TTL. TTL is the fallback time-bomb for paths I forgot to invalidate; it bounds staleness but also creates the stampede.
 
 **Q3: What is a cache stampede and how do you stop it?**
-> When a hot key expires, many concurrent readers all miss and each fires its own DB query — the cache turns one expected miss into N, spiking the DB exactly at the worst moment. Mitigations: single-flight (coalesce concurrent misses into one in-flight load), a lock/`SET NX` so only one refills, and TTL jitter so keys don't expire in lockstep.
+> When a hot key expires, many concurrent readers all miss and each fires its own DB query — the cache turns one expected miss into N, spiking the DB exactly at the worst moment. Mitigations: single-flight (coalesce concurrent misses into one in-flight load), a lock/`SET NX` so only one refills, and TTL jitter so keys don't expire in lockstep (measured: 200 keys, busiest second 200 → 30 misses with ±10% jitter).
 
 **Trap answer to avoid:** *"The cache is just `if in dict: return; else: fetch; put in dict`"* — that's a per-process stale lie that ignores sharing and invalidations; and *"I'll just set a short TTL, problem solved"* — short TTL only shrinks (doesn't remove) the stale/expiry window and can *increase* stampede frequency.
 
