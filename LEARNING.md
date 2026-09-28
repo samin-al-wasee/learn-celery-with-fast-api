@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table) + interview file
+- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -334,6 +334,18 @@ Keep it as bullets, not essays.
 - **Trade-offs:** one extra DB write per state change and a table to clean up (retention job later); the enqueue-after-commit gap remains, but now it's visible: an enqueue failure marks the job `failed` instead of leaving it `queued` forever.
 - **Interview answer:** *"For a user-facing async job I return 202 with a job id and a Location header, and store the job in my own database with an owner and explicit states that the worker updates. I don't expose Celery's AsyncResult: it reports PENDING for anything it doesn't know, results expire, it has no notion of ownership, and if the backend evicts you lose finished jobs. Reads are filtered by owner and return 404 for anything else."*
 - **Trap to avoid:** *"Just return the task id and let the client poll AsyncResult"*: that's an unauthenticated window into every task's result, and `PENDING` hides typos, expiry and eviction.
+
+### `2026-09-28 · M3` — observability: Flower with defaults sees nothing and guards nothing
+
+- **What we did:** Added Flower 2.2 (`flower` in requirements). **Naive:** `celery -A app.worker.celery_app flower` with defaults. **Fix:** task events on in `app/worker/celery_app.py` (`worker_send_task_events`, `task_send_sent_event`, `task_track_started`); `flowerconfig.py` (auto-loaded by `celery flower`) sets `basic_auth` from `FLOWER_BASIC_AUTH` and `broker_api` from `RABBITMQ_MANAGEMENT_URL`, both via settings/`.env`. Observed with `scripts/observe_flower.py` (worker + Flower on :5556, 5 tasks published from the script).
+- **Prediction vs reality:** I expected Flower's JSON API to be open by default. **Flower 2.x refuses it** without auth (`FLOWER_UNAUTHENTICATED_API … is required`). The naive run therefore simulates the common "fix" for that 401, flipping the flag, and that opened **both the API and the HTML UI**.
+- **Observed (naive):** no credentials → `/api/workers` **200**, `/tasks` UI **200**; Flower knew **0/5** tasks (events off); `/api/queues/length` → `active_queues: []` (no broker API, no queue depth).
+- **Observed (fixed):** no credentials → **401** on API and UI; **5/5** tasks, state `SUCCESS`, runtime ~0.52s each; queue depth `{'celery': 0}`. Regression: welcome-email crash 10/10.
+- **Lesson 1 — monitoring only sees what is sent:** Celery workers don't emit task events unless told to (`worker_send_task_events`), and "sent" events come from the *publisher* (`task_send_sent_event`), so both sides need config. Without them Flower lists workers and nothing else, which looks like "no traffic".
+- **Lesson 2 — queue depth is a broker metric:** backlog lives in RabbitMQ, not in Celery events. Flower reads it through the management API (`broker_api`); in production you alert on it (depth growing = workers can't keep up) from the broker's own metrics.
+- **Lesson 3 — Flower is an admin surface:** it shows task names and arguments (here user/job ids; in real systems often emails or tokens) and can revoke tasks. Credentials come from `.env`, never code; no credentials means the API stays locked. Flower also keeps state **in memory**, so a restart loses history: it's a live view, not an audit log.
+- **Interview answer:** *"For Celery observability I turn on task events on workers and publishers, run Flower behind authentication for a live view of tasks, runtimes and failures, and take queue depth from the broker's management API, which is what I'd alert on. Flower is in-memory, so for history I rely on logs and metrics, and anything user-facing, like job status, lives in my own database."*
+- **Trap to avoid:** *"Flower shows nothing, so the workers are idle"*: events are off by default. Also avoid exposing Flower without auth "because it's internal"; it leaks task arguments and can revoke tasks.
 
 ---
 
