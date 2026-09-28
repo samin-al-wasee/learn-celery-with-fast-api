@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
+    email_ack_seconds: float = 0.0
     email_outbox_dir: str = ".outbox/emails"
 
     # DEV-ONLY fallback; never ship a real secret as a default.
