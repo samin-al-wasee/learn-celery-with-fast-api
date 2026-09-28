@@ -1,6 +1,7 @@
 from app.models.appointment import Appointment, AppointmentStatus
+from app.models.chat_message import ChatMessage
 from app.models.export_job import ExportJob, ExportStatus
 from app.models.record import MedicalRecord
 from app.models.user import User, UserRole
 
-__all__ = ["Appointment", "AppointmentStatus", "ExportJob", "ExportStatus", "MedicalRecord", "User", "UserRole"]
+__all__ = ["Appointment", "AppointmentStatus", "ChatMessage", "ExportJob", "ExportStatus", "MedicalRecord", "User", "UserRole"]
