@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # M3: Flower (see flowerconfig.py). No credentials -> Flower's API stays locked.
     flower_basic_auth: str | None = None
     rabbitmq_management_url: str = "http://cardicheck:cardicheck@localhost:15672/api/"
+    rabbitmq_blocked_timeout_seconds: float = 2.0
 
     # M3: appointment reminders go out this long before scheduled_at.
     reminder_lead_seconds: int = 86400

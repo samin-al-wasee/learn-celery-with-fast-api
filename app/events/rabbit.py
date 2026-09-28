@@ -6,5 +6,9 @@ EXCHANGE = "cardicheck.events"
 
 
 def connection_params() -> pika.URLParameters:
+    settings = get_settings()
     # M5: Celery writes the default vhost as "//"; pika parses that as vhost "" (not "/").
-    return pika.URLParameters(get_settings().celery_broker_url.rstrip("/") + "/%2F")
+    params = pika.URLParameters(settings.celery_broker_url.rstrip("/") + "/%2F")
+    # M5: when a resource alarm blocks publishers, fail after this long instead of hanging forever.
+    params.blocked_connection_timeout = settings.rabbitmq_blocked_timeout_seconds
+    return params

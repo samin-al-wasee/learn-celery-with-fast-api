@@ -3,7 +3,12 @@ import threading
 from typing import Any
 
 import pika  # type: ignore[import-untyped]
-from pika.exceptions import AMQPChannelError, AMQPConnectionError, ChannelWrongStateError  # type: ignore[import-untyped]
+from pika.exceptions import (  # type: ignore[import-untyped]
+    AMQPChannelError,
+    AMQPConnectionError,
+    ChannelWrongStateError,
+    ConnectionBlockedTimeout,
+)
 
 from app.events.rabbit import EXCHANGE, connection_params
 
@@ -41,6 +46,10 @@ class EventPublisher:
                     # instead of being dropped silently (e.g. a routing-key typo).
                     self._ensure_channel().basic_publish(EXCHANGE, routing_key, body, props, mandatory=True)
                     return
+                except ConnectionBlockedTimeout:
+                    # M5: the broker is applying backpressure; retrying would just block again.
+                    self._conn = None
+                    raise
                 except (AMQPConnectionError, AMQPChannelError, ChannelWrongStateError):
                     # M5: an idle BlockingConnection misses heartbeats and the broker drops it;
                     # reconnect once, then give up loudly.
