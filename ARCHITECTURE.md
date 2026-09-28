@@ -148,6 +148,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Task events on + Flower behind basic auth (`flowerconfig.py`), queue depth from RabbitMQ management API | Flower with defaults | Defaults showed 0 tasks and no backlog; opened up, it exposed task args. Flower is a live, in-memory view; history lives in logs/DB. |
 | 2026-09-28 | Chat fan-out via Redis pub/sub, one subscription per active room per process; WS auth in the first frame | In-process registry; `?token=` in the WS URL | Observed cross-process 0/10 with the registry; uvicorn logs the full WS path, so a query token would be written to logs |
 | 2026-09-28 | Chat = Postgres log (store, then publish) + pub/sub for live delivery + replay on reconnect | Pub/sub as the only path | Observed 0/5 catch-up and 2× retried sends with pub/sub alone; the log gives durability, ordering (DB id) and idempotency |
+| 2026-09-28 | Hand-written consumers ack after work, `prefetch_count=10`, poison → reject(requeue=False) → DLX `cardicheck.dlx` → `*.dlq`; handlers idempotent on `event_id` | auto_ack, unbounded prefetch, requeue on failure | Observed 86/99 lost on a crash and a poison-message crash losing 49; requeueing poison would hot-loop |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

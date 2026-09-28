@@ -64,6 +64,7 @@ Celery (added in M3):
 ```powershell
 celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows   # run a Celery worker
 celery -A app.worker.celery_app flower --port=5555              # Flower UI; auth from FLOWER_BASIC_AUTH (flowerconfig.py)
+python -m app.consumers.notifications                          # M5 pika consumer (appointment.* events)
 celery -A app.worker.celery_app beat --loglevel=info     # run the scheduler (reminder scan) — exactly one beat process
 ```
 

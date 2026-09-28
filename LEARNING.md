@@ -28,7 +28,7 @@ Keep it as bullets, not essays.
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
-- **M5 — RabbitMQ deep dive** (empty)
+- **M5 — RabbitMQ deep dive** (1 entry: auto-ack/unbounded prefetch → manual ack + prefetch + DLX)
 - **M6 — Microservices / distributed systems** (empty)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
@@ -416,6 +416,24 @@ Keep it as bullets, not essays.
 > Order by the DB-assigned id, not client or server timestamps. Clients send a client-generated message id; a unique constraint on (sender, client id) makes retries idempotent. Delivery is at-least-once (live + replay can overlap), so clients dedup by id.
 
 **Trap answer to avoid:** *"WebSockets plus Redis pub/sub is a reliable messaging system"*: pub/sub drops messages for anyone not connected; reliability comes from the stored log plus replay.
+
+---
+
+## M5 — RabbitMQ deep dive
+
+### `2026-09-28 · M5` — hand-written consumer: auto-ack + unbounded prefetch → manual ack, prefetch, dead-letter
+
+- **What we did:** `app/consumers/notifications.py` consumes `appointment.*` events from topic exchange `cardicheck.events` with **pika** (no Celery), run as `python -m app.consumers.notifications`. **Naive:** `basic_consume(auto_ack=True)`, no `basic_qos`, handler just `json.loads`. **Fix:** `basic_qos(prefetch_count=10)`; `basic_ack` only after the work; poison (`ValueError/KeyError/TypeError` on decode) → `basic_reject(requeue=False)`, other failures → `basic_nack(requeue=False)`, both routed by `x-dead-letter-exchange` to fanout `cardicheck.dlx` → `notifications.appointments.dlq`; handler idempotent by `event_id` (exclusive-create marker). Observed with `scripts/observe_consumer.py [no-kill]`: 100 persistent events, #50 is not JSON; hard-kill at 1s; the script restarts the consumer like a supervisor.
+- **Observed (naive):** kill at 1s → queue already showed **0 ready / 0 unacked**: RabbitMQ had pushed all 100 to the consumer and, with auto-ack, forgot them → **86/99 lost**. Poison only (no kill) → consumer **crashed** (`JSONDecodeError`) at #50 → the 49 after it were already delivered + auto-acked → **49 lost**.
+- **Observed (fixed):** kill at 1s → queue kept **89 ready** (the 10 unacked went back) → **99/99 processed, 0 lost**, poison **dead-lettered (1)**, **0 crashes**. Poison only → 99/99, DLQ 1.
+- **Lesson 1 — `auto_ack` means "delivered = done":** the broker deletes the message as it goes out on the wire, so the consumer's RAM is the only copy. Manual ack after the work moves the "done" point to where the work is actually done.
+- **Lesson 2 — prefetch bounds your blast radius:** with no `basic_qos`, RabbitMQ pushes the whole queue to the first consumer. That loses everything on crash (with auto-ack), starves other consumers, and bloats memory. `prefetch_count` caps unacked messages per consumer; it's also the knob that makes adding consumers actually spread the load.
+- **Lesson 3 — poison must leave the queue on purpose:** crashing on it loses what's in flight; `nack(requeue=True)` hot-loops it forever at full speed. Reject without requeue + a dead-letter exchange parks it for a human, and the consumer keeps going.
+- **Lesson 4 — queue arguments are immutable:** redeclaring `notifications.appointments` with `x-dead-letter-exchange` failed with `PRECONDITION_FAILED - inequivalent arg 'x-dead-letter-exchange'`. The observe script deletes/recreates the queue; production sets DLX/TTL/length limits through a **policy**, which can change without recreating the queue.
+- **Lesson 5 — ack-after-work makes it at-least-once:** a crash after the side effect and before the ack redelivers, so the handler dedups by `event_id` (same pattern as M3's idempotency key). This run's kill didn't land in that window (0 suppressed), so the path exists but wasn't exercised here.
+- **Found along the way:** pika reads Celery's `amqp://…//` as vhost `""`, not `/`; `connection_params()` rewrites it to `/%2F`.
+- **Interview answer:** *"With auto-ack RabbitMQ considers a message done the moment it's delivered, and without a prefetch limit it delivers the whole queue to one consumer, so a crash loses everything in flight; we lost 86 of 99 that way. I consume with manual acks after the work, a bounded prefetch, and a dead-letter exchange for poison messages so they neither crash the consumer nor loop forever. Acking after the work gives at-least-once delivery, so handlers are idempotent on an event id."*
+- **Trap to avoid:** *"RabbitMQ persists my messages, so nothing is lost"*: durability protects messages in the broker, not the ones already delivered to an auto-acking consumer. Also avoid *"just requeue on failure"*: a poison message will spin forever.
 
 ---
 
