@@ -1,14 +1,18 @@
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from math import ceil
+from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user
+from app.core.breaker import CircuitBreaker
+from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
 from app.events.outbox import stage
@@ -22,6 +26,39 @@ from app.schemas.appointments import (
 from app.schemas.envelope import ApiResponse
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
+logger = logging.getLogger("uvicorn.error")
+
+_availability_breaker = CircuitBreaker(
+    "availability",
+    failure_threshold=get_settings().availability_breaker_threshold,
+    reset_seconds=get_settings().availability_breaker_reset_seconds,
+)
+
+
+async def _check_availability(doctor_id: int, at: datetime) -> tuple[bool, list[str]]:
+    """Returns (available, warnings). The check is advisory: on any failure, degrade."""
+    # M6: a dead dependency still costs every request its full timeout (a refused connect takes
+    # ~2s on Windows); an open breaker skips the call and degrades immediately instead.
+    if not _availability_breaker.allow():
+        return True, ["availability_unchecked"]
+    settings = get_settings()
+    try:
+        # M6: every remote call gets a deadline; waiting forever turns their outage into ours.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.availability_timeout_seconds)) as client:
+            r = await client.get(
+                f"{settings.availability_url}/availability",
+                params={"doctor_id": doctor_id, "at": at.isoformat()},
+            )
+            r.raise_for_status()
+    except httpx.HTTPError as exc:
+        _availability_breaker.record_failure()
+        logger.warning("availability check skipped doctor_id=%s: %s (breaker %s)",
+                       doctor_id, type(exc).__name__, _availability_breaker.state)
+        # M6: advisory check (the doctor confirms every booking), so book as pending and say
+        # the check was skipped. A critical dependency would return 503 instead.
+        return True, ["availability_unchecked"]
+    _availability_breaker.record_success()
+    return bool(r.json().get("available")), []
 
 
 def _brief(user: User) -> UserBrief:
@@ -94,6 +131,17 @@ async def create_appointment(
             message="doctor_id must reference a doctor",
         )
 
+    # M6: end the read-only transaction so this request's pool connection goes back before
+    # the network call; a slow dependency must not hold DB connections the whole API shares.
+    await db.commit()
+    available, warnings = await _check_availability(doctor_id, payload.scheduled_at)
+    if not available:
+        raise CardicheckError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="DOCTOR_UNAVAILABLE",
+            message="the doctor is not available at that time",
+        )
+
     appt = Appointment(
         patient_id=patient_id,
         doctor_id=doctor_id,
@@ -105,7 +153,7 @@ async def create_appointment(
     _stage_event(db, "appointment.booked", appt)
     await db.commit()
     await db.refresh(appt)
-    return ApiResponse(data=_response(appt))
+    return ApiResponse(data=_response(appt), meta={"warnings": warnings} if warnings else {})
 
 
 @router.get("", response_model=ApiResponse[list[AppointmentResponse]])

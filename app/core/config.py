@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     notify_outbox_dir: str = ".outbox/notifications"
     notify_ack_delay_seconds: float = 0.0
 
+    # M6: availability service (separate process, called over HTTP during booking).
+    availability_url: str = "http://127.0.0.1:8100"
+    availability_timeout_seconds: float = 2.0
+    availability_breaker_threshold: int = 3
+    availability_breaker_reset_seconds: float = 10.0
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
