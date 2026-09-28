@@ -22,6 +22,7 @@ Before starting any task, read:
 - `ROADMAP.md` — where we are in the plan
 - `ARCHITECTURE.md` — current stack and decisions
 - `AGENTS.md` — you are here
+- `LOOP.md` — the execution loop (Plan → Implement → Test → Verify → Document → Repeat) with the exit condition each phase must pass. **Every increment runs this loop**; the Verify phase runs `scripts/verify.ps1`. Claude Code: `/loop-engineer <task>`.
 
 If you are about to repeat a mistake already logged in `LEARNING.md`, stop and say so.
 
@@ -75,6 +76,7 @@ uvicorn app.main:app --reload              # API (from project root)
 celery -A app.worker.celery_app worker --loglevel=info
 alembic upgrade head                       # apply migrations
 pytest                                     # run tests (once tests exist)
+.\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script>)
 ```
 
 Prefer PowerShell for this repo. Do not `cd` inside commands — use the `workdir` parameter.

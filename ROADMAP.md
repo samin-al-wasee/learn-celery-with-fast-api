@@ -21,6 +21,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 3 | `docker-compose.yml` (postgres, redis, rabbitmq) | ✅ | Stack: postgres:16 + redis:7 + rabbitmq:3-management, healthchecks + volumes |
 | 4 | Python env / deps (`pyproject.toml` or `requirements`) | ✅ | `requirements.txt` + `.venv` |
 | 5 | git init + `.gitignore` (secrets, `.env`, `__pycache__`) | ✅ | Repo git-initialized; branch/commit conventions in AGENTS §7 |
+| 6 | Loop Engineer: gated agent loop + verify script (`LOOP.md`, `scripts/verify.ps1`) | ✅ | Any agent via AGENTS.md; Claude Code via `/loop-engineer` |
 
 ---
 
@@ -165,6 +166,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | Date | Milestone | Increment | Status |
 |------|-----------|-----------|--------|
 | 2026-09-01 | M0 | Docs scaffolded | ✅ |
+| 2026-09-28 | M0 | Loop Engineer: `LOOP.md` gated loop (Plan→Implement→Test→Verify→Document→Repeat) + `scripts/verify.ps1` + `/loop-engineer` skill; linked from AGENTS.md | ✅ |
 | 2026-09-01 | M0/M1 | git init, docker compose stack (postgres/redis/rabbitmq), FastAPI + async DB skeleton | ✅ |
 | 2026-09-01 | M1 | User model + Alembic async migrations (first migration applied, psql verified) | ✅ |
 | 2026-09-01 | M1 | naive signup (sync session + sleep) → observed probe blocked ~1085ms → `AsyncSession` DI | ✅ |

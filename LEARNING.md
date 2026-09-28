@@ -23,7 +23,7 @@ Keep it as bullets, not essays.
 
 ## Table of contents (per milestone)
 
-- **M0 — Foundation** (placeholders below)
+- **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (2 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight)
 - **M3 — Celery & async jobs** (empty)
@@ -45,6 +45,16 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** Locked the 5-step loop in `AI_WORKFLOW.md` and made `LEARNING.md` updates a hard rule in `AGENTS.md`.
 - **Interview answer:** *"We structure the codebase to make every failure observable and every decision documented — so when I explain a design at work, I can ground it in a real failure I saw, not a slide."*
 - **Trap to avoid:** "We documented everything... in our heads." Documentation that lives in memory doesn't survive the week.
+
+### `2026-09-28 · M0` — Loop Engineer: a gated execution loop for any coding agent
+
+- **What we did:** Added `LOOP.md` (Plan → Implement → Test → Verify → Document → Repeat; each phase has an entry condition and an exit condition), `scripts/verify.ps1` (the Verify check: compile, `import app.main`, no tracked `.env`, routes↔Bruno lockstep, scope <10 files, pytest if `tests/` exists, optional observe script, `-RequireDocs`), and a Claude Code skill `.claude/skills/loop-engineer/SKILL.md`. `AGENTS.md` links `LOOP.md` so any agent that loads `AGENTS.md` (Codex, Cursor, Copilot) picks it up.
+- **Naive attempt:** "Implement X" and trust the agent's "done." `AI_WORKFLOW.md` says *what* to learn but not *when a phase is finished*, so "done" was self-reported.
+- **Observed (already in this log):** a `.bru` script silently stopped capturing variables after a shape change (the source of the collection-freshness rule); a validator's 422 crashed into a 500 inside our own envelope; docs updates depended on someone remembering. On first run, `verify.ps1 -RequireDocs` went **RED** ("not in diff: LEARNING.md, ROADMAP.md") until this entry was written, so the script now catches "forgot to log" automatically.
+- **Lesson:** an agent loop without exit conditions drifts. Each phase needs a **checkable** condition for being finished (confirmation, exit code, before/after numbers, docs in diff), a **failure route** (which phase a failed check sends you back to), and **stop conditions** (same check fails 3×, unplanned decision, anything irreversible) so the agent asks instead of improvising.
+- **Fix / best practice:** rules a script can check live in `verify.ps1` (exits 0/1); rules that need judgment ("Done when" met, honest numbers) live in `LOOP.md`. The learning loop maps onto two passes: the naive version and the fix each go through Implement → Test.
+- **Interview answer:** *"I run coding agents in a gated loop: plan with measurable done-criteria, implement, test against the real stack, verify with a script that exits non-zero on failure, document, repeat. Each gate has a failure route back to an earlier phase and hard stop conditions for irreversible or unplanned decisions, so the agent's autonomy is bounded by checks, not by trust."*
+- **Trap to avoid:** *"The agent said the tests pass"* — self-reported success isn't verification; and loosening an assert to make a check pass hides the bug the check exists to catch.
 
 ### `2026-09-01 · M0/M1` — repo bootstrap, docker stack, app skeleton
 
