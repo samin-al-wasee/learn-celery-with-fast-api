@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency, reminders (beat), export jobs done.** Next up: M3 observability (Flower, queue depth), then M4 real-time chat.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete (thread → Celery, idempotency, beat reminders, export jobs, Flower).** Next up: M4 — real-time chat (naive in-process WebSocket registry first).
 
 ---
 
@@ -83,8 +83,9 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Task modeling: retries + backoff ✅, idempotency ✅, ETA/countdown ✅ — long-ETA reminders crashed the worker (consumer_timeout) and reminded a cancelled appointment → beat DB scan
 - [x] `beat` = scheduled jobs: `send_due_reminders` scan (SKIP LOCKED, `reminder_sent_at`, key includes `scheduled_at`) ✅
 - [x] Task state: naive `AsyncResult` over the cache Redis (unknown id → PENDING, IDOR, eviction → PENDING) → `export_jobs` table, owner-only 404s ✅
-- [ ] Observability: Flower / task events, tracebacks, queue depth
-- [ ] LEARNING.md log + interview section (Celery architecture, broker vs backend, retries, idempotency, ETA)
+- [x] Observability: Flower with defaults saw 0/5 tasks and (API flag flipped) was open → task events on, `flowerconfig.py` basic auth from `.env`, broker_api queue depth → 5/5 tasks, 401 unauth ✅
+- [x] LEARNING.md log + interview section (Celery architecture, broker vs backend, retries, idempotency, ETA, observability) ✅
+- **M3 scope complete.** (Result backend deliberately unused: app state lives in Postgres; revisit if a loop needs chords.)
 
 ---
 
@@ -193,3 +194,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M1 | Bruno collection as contract: CLI run exposed substring asserts invalid in CLI 4.2.0, 4 malformed JSON bodies (422), cancel-before-confirm order → field asserts, fixed bodies/order (15/15, 49/49) + `verify.ps1 -Bruno` | ✅ |
 | 2026-09-28 | M3 | Reminders: naive long-ETA tasks (worker crashed on consumer_timeout, 0/3 sent; with 30 min timeout the cancelled appointment was reminded and the rescheduled one got the stale time) → `reminder_sent_at` migration + beat scan with SKIP LOCKED + scheduled_at-keyed idempotency (A/B/C all correct) + reschedule Bruno example | ✅ |
 | 2026-09-28 | M3 | Export jobs: naive AsyncResult status on the cache Redis (unknown id → 200 PENDING, other user read result, eviction → PENDING) → `export_jobs` table (migration `cdac0e353a2c`, enum downgrade fixed) + 202/Location + owner-only 404 + download; Bruno 20/20 | ✅ |
+| 2026-09-28 | M3 | Observability: Flower defaults saw 0/5 tasks, no queue depth, and with the API flag flipped UI+API were open → task events, `flowerconfig.py` (basic auth + broker_api from settings) → 5/5 tasks with runtimes, queue depth, 401 unauth. **M3 complete** | ✅ |

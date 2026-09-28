@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
+- **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -362,6 +362,9 @@ Keep it as bullets, not essays.
 
 **Q4: How would you send a reminder 24 hours before an appointment?**
 > Not with a long ETA task: it freezes booking-time data (cancel/reschedule are ignored) and, on RabbitMQ, the worker holds it unacked in RAM until it's due, which trips `consumer_timeout`. I keep a `reminder_sent_at` column and run a beat task every minute that selects due rows with `SKIP LOCKED`, sends with an idempotency key, and marks them. We saw the ETA version remind a cancelled appointment and crash the worker; the scan version got all three cases right.
+
+**Q5: How do you monitor Celery in production?**
+> Turn on task events (workers and publishers), watch them live in Flower behind auth, and alert on queue depth and task failure rate from the broker and logs. Flower's state is in memory, so it's a live view, not history. Queue depth growing means consumers can't keep up: scale workers or find the slow task.
 
 **Trap answer to avoid:** *"Celery guarantees exactly-once"* or *"I'll just set `max_retries=0` to avoid duplicates"*: turning off retries doesn't stop redelivery after a worker crash, it only adds lost jobs.
 
