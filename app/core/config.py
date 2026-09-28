@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # M3: Celery broker (RabbitMQ).
     celery_broker_url: str = "amqp://cardicheck:cardicheck@localhost:5672//"
+    # M3: Flower (see flowerconfig.py). No credentials -> Flower's API stays locked.
+    flower_basic_auth: str | None = None
+    rabbitmq_management_url: str = "http://cardicheck:cardicheck@localhost:15672/api/"
 
     # M3: appointment reminders go out this long before scheduled_at.
     reminder_lead_seconds: int = 86400

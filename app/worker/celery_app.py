@@ -16,6 +16,10 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # M3: fire-and-forget jobs; no result backend until a loop needs task state.
     task_ignore_result=True,
+    # M3: task events are off by default, and Flower can only show what it is sent.
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+    task_track_started=True,
     beat_schedule={
         "send-due-reminders": {
             "task": "app.worker.tasks.send_due_reminders",
