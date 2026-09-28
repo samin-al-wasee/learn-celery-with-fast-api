@@ -73,7 +73,7 @@ docker compose up -d                       # infra: postgres, redis, rabbitmq
 docker compose down                        # stop
 docker compose ps                          # status
 uvicorn app.main:app --reload              # API (from project root)
-celery -A app.worker.celery_app worker --loglevel=info
+celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows
 alembic upgrade head                       # apply migrations
 pytest                                     # run tests (once tests exist)
 .\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script>)

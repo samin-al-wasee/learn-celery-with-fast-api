@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete (read-through, invalidation, single-flight, TTL jitter, eviction + fail-open).** Next up: M3 — Celery & async jobs (naive thread-per-request first).
+> Phase **1 — M1 complete; M2 caching complete; M3 started: thread-per-request → Celery (acks_late + retries) done.** Next up: M3 idempotency (at-least-once double sends).
 
 ---
 
@@ -74,9 +74,11 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 **Learning 2:** Celery. **Learning 3 (partial):** Message queues via the broker. **Learning 4:** Asynchronous jobs.
 
-- [ ] **Naive:** ad-hoc `threading.Thread` per request for background work (e.g. "send email confirmation")
-- [ ] **Observations:** jobs lost when process dies, no retries, can't scale, unobservable
-- [ ] Celery app, worker process, broker (rabbitmq) + result backend (redis)
+- [x] **Naive:** ad-hoc `threading.Thread` per request for background work — welcome email on signup
+- [x] **Observations:** API killed mid-send → 0/10 delivered; 50% SMTP failure → 3/10, no retries, only stderr tracebacks
+- [x] Celery app + worker + RabbitMQ broker: `acks_late` + retries → worker killed mid-send 10/10, flaky 10/10 ✅ (result backend deferred: separate Redis, see ARCHITECTURE)
+- [ ] Idempotency: at-least-once redelivery can double-send → dedup key per email
+- [ ] Chore: Bruno `res.body: contains` asserts fail in Bruno CLI 4.2.0 → rewrite as `res.body.data.<field>` asserts
 - [ ] Async no-blocking flows: notifications, PDF/export generation, reminders
 - [ ] Task modeling: signatures, `apply_async`, ETA/countdown, retries + backoff, idempotency
 - [ ] `beat` = scheduled jobs (e.g. daily reminder)
@@ -185,3 +187,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-02 | M2 | Caching (2nd increment): cache stampede/thundering herd — observed 20 concurrent misses → 20 datastore calls (in-process, deterministic) → single-flight `read_through` (cache.py) → 1 call; process-local scope + cross-worker lock deferred | ✅ |
 | 2026-09-28 | M2 | TTL strategy: fixed TTL → synchronized expiry (200 keys in 1s) → ±10% jitter in `cache_set` (13s window, peak 200 → 30) | ✅ |
 | 2026-09-28 | M2 | Memory limits + fail-open: full Redis (`noeviction`) and Redis down → `GET /users/me` 500 → fail-open cache helpers (0.5s timeouts) + `maxmemory 128mb allkeys-lru` → 200 in all three cases | ✅ |
+| 2026-09-28 | M3 | Welcome email: naive thread-per-request (crash 0/10, flaky 3/10) → Celery task on RabbitMQ with acks_late + retries (crash 10/10, flaky 10/10, 0 dupes); found kombu localhost→127.0.0.1 + silent publish-after-commit loss, competing consumers, thread-unsafe outbox | ✅ |

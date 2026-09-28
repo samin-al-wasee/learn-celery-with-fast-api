@@ -60,8 +60,10 @@ Client ──▶ FastAPI (one process) ──▶ Postgres
                                 └──▶ ("background": threading.Thread)
 ```
 
-### Phase 2 — Async-first monolith (planned M3)
+### Phase 2 — Async-first monolith (M3, in progress)
 Introduce Celery worker + RabbitMQ broker + Redis result backend.
+
+**Current (M3):** `POST /auth/signup` enqueues `send_welcome_email` (`app/worker/tasks.py`) on RabbitMQ; workers run with `acks_late` + `reject_on_worker_lost` + prefetch 1 (at-least-once), autoretry with exponential backoff + jitter. No result backend yet (`task_ignore_result`). Known gap: publish happens after the DB commit, so a broker outage loses the job (logged, not retried) → transactional outbox in M6.
 ```
                   ┌────────────────────────────┐
                   │  FastAPI  (request path)   │  ──▶ Postgres, Redis
@@ -137,6 +139,8 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-01 | WebRTC (P2P→SFU) for calls in M7 | Prebuilt SDK | P2P→SFU is the classic interview narrative; forces real-time reasoning |
 | 2026-09-02 | Redis as the shared cache (read-through) | In-process dict (M1/M2 naive) | A cache must be shared across workers and survive restarts to mean anything; otherwise it silently serves stale, per-process data. Sync `redis-py` calls are delegated to the threadpool (never the loop). |
 | 2026-09-28 | Cache Redis: `maxmemory 128mb` + `allkeys-lru`; cache helpers fail-open (Redis error = miss, logged) with 0.5s socket timeouts | Default unbounded memory + `noeviction`; errors propagate | A cache is an optimization: bounded memory and eviction keep writes succeeding, and fail-open means a full or down Redis degrades latency instead of returning 500. **Consequence for M3:** `allkeys-lru` can evict Celery results, so the result backend must not share this instance's eviction policy (separate instance/policy). |
+
+| 2026-09-28 | Celery tasks ack late (`acks_late`, `reject_on_worker_lost`, prefetch 1) with autoretry + backoff | Default early ack; threads in the API | A worker crash must redeliver, not drop, the job (observed 0/10 → 10/10). Cost: at-least-once, so tasks must be idempotent. |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

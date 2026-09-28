@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (empty)
+- **M3 — Celery & async jobs** (1 entry: thread-per-request → Celery acks_late + retries)
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -262,6 +262,25 @@ Keep it as bullets, not essays.
 > With Redis defaults, a full instance (`noeviction`) rejects writes and a down one throws, and if cache calls aren't guarded, both become 500s. I cap memory with an eviction policy (`allkeys-lru`) and make cache calls fail-open with short timeouts, so a cache failure is a miss plus a log line. The price is latency during an outage, which a circuit breaker limits.
 
 **Trap answer to avoid:** *"The cache is just `if in dict: return; else: fetch; put in dict`"* — that's a per-process stale lie that ignores sharing and invalidations; and *"I'll just set a short TTL, problem solved"* — short TTL only shrinks (doesn't remove) the stale/expiry window and can *increase* stampede frequency.
+
+---
+
+## M3 — Celery & async jobs
+
+### `2026-09-28 · M3` — background work: thread-per-request → Celery task (acks_late + retries)
+
+- **What we did:** Signup now sends a welcome email via a fake SMTP (`app/services/email.py`: 2s send, configurable failure rate, one `.eml` file per delivered email in `.outbox/`). **Naive:** `threading.Thread(target=deliver_welcome_email).start()` inside `POST /auth/signup`. **Fix:** Celery app on the RabbitMQ broker (`app/worker/celery_app.py`) with `task_acks_late`, `task_reject_on_worker_lost`, `worker_prefetch_multiplier=1`, JSON-only, results ignored; task `send_welcome_email` (`app/worker/tasks.py`) with `autoretry_for=(SmtpError,)`, exponential backoff + jitter, `max_retries=8`. The route enqueues via `run_in_threadpool(send_welcome_email.delay, ...)` because publishing is blocking network I/O (M1 lesson). Observed with `scripts/observe_email_jobs.py thread|celery` (starts its own API on :8001 and worker, 10 concurrent signups).
+- **Observed (naive):** **crash** (hard-kill the API 0.5s into the sends) → **0/10 delivered**. **flaky** (50% SMTP failure) → **3/10 delivered**, 7 lost. The only trace was raw `Exception in thread` tracebacks on stderr: no job state, no retry, nothing to query.
+- **Observed (fixed):** **crash** (hard-kill the *worker* holding 10 received / 0 finished, then restart) → **10/10 delivered, 0 duplicates**. **flaky** → **10/10** via retries (one task needed 3 retries). Signup stays at ~50–230ms; the new Bruno `res.responseTime: lt 1000` assert pins that.
+- **Lesson 1 — a thread is not a job:** the job exists only in the web process's memory, so every deploy, crash or scale-down deletes in-flight work, and failures have nowhere to go. A broker makes the job a *durable message* that outlives any single process.
+- **Lesson 2 — `acks_late` is what makes the crash test pass:** the default acks on *receipt*, so a worker dying mid-task has already told RabbitMQ "done" and the job is lost. Acking *after* success means an unacked message is redelivered when the connection drops. The cost is **at-least-once**: a worker killed after the side effect but before the ack sends the email twice. We saw 0 duplicates only because the kill landed mid-send; idempotency is the next loop.
+- **Lesson 3 — publish-after-commit is a gap, and we hit it for real:** on this machine kombu rewrites `localhost` → `127.0.0.1` (`kombu/transport/pyamqp.py:183`), where a VS Code port forward (not our RabbitMQ) refused the login. The user row committed, `.delay()` raised `AccessRefused`, our `try/except` logged it, and signup returned **201 with no email ever queued** (4 users). The robust fix is a **transactional outbox** (write the job to Postgres in the same transaction, relay it to the broker), planned for M6. Local fix: `.env` broker host `[::1]`.
+- **Lesson 4 — competing consumers:** a leftover worker on the same queue silently took 9 of the observe run's 20 jobs (into its own outbox), which looked like "lost" emails. Every consumer on a queue competes for its messages; in production that's an old-version worker still running after a deploy and processing new jobs with old code.
+- **Lesson 5 — worker concurrency means thread safety:** with `-P threads` (prefork doesn't work on Windows), two tasks appending to one outbox file at the same moment overwrote each other and one delivery vanished (task *succeeded*, line missing). The fix was one file per email. Task code must be safe to run in parallel.
+- **Deferred:** result backend (no loop needs task state yet; per `ARCHITECTURE.md` it must not share the `allkeys-lru` cache Redis), idempotency/dedup, transactional outbox (M6), Flower.
+- **Found along the way:** the Bruno CLI 4.2.0 fails every existing `res.body: contains "..."` assert (it won't run `contains` on an object body), on untouched requests like login too. Only `status` and the new `responseTime` asserts pass in the CLI. Logged as a ROADMAP chore.
+- **Interview answer:** *"Background work doesn't belong in a thread inside the web process: it dies with the process, can't retry and can't be observed. I publish a task to a broker like RabbitMQ and run it on separate Celery workers. With acks_late the message is only acked after success, so a worker crash means redelivery, which gives at-least-once delivery, so the task must be idempotent. And publishing after the DB commit can still lose the job if the broker is down; the full fix is a transactional outbox."*
+- **Trap to avoid:** *"Celery guarantees my task runs exactly once"*: it's at-most-once with default early acks and at-least-once with `acks_late`, never exactly-once. Also avoid *"FastAPI BackgroundTasks is the same thing"*: it runs in the same process after the response, so it's just as mortal as the thread.
 
 ---
 

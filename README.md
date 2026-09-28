@@ -62,7 +62,7 @@ uvicorn app.main:app --reload   # run the FastAPI API (from project root)
 
 Celery (added in M3):
 ```powershell
-celery -A app.worker.celery_app worker --loglevel=info   # run a Celery worker
+celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows   # run a Celery worker
 celery -A app.worker.celery_app beat --loglevel=info     # run the scheduler (when needed)
 ```
 
