@@ -23,6 +23,7 @@ assert {
   res.status: eq 201
   res.body: contains "data"
   res.body: contains "id"
+  res.responseTime: lt 1000
   res.body: contains "patient"
 }
 
@@ -31,4 +32,9 @@ script:post-response {
   const data = res.getBody().data;
   bru.setVar('signup_email', data.email);
   bru.setVar('signup_patient_id', data.id);
+}
+
+docs {
+  Enqueues a welcome email as a Celery task (M3). The ~2s send runs on the worker,
+  so signup stays fast: the responseTime assert fails if email ever moves back onto the request path.
 }
