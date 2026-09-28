@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency done.** Next up: M3 task modeling (ETA/countdown), then beat + observability.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency, reminders (beat) done.** Next up: M3 observability (task state, result backend, Flower), then async flows (PDF export).
 
 ---
 
@@ -80,8 +80,8 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Idempotency: worker killed after send, before ack → 9 duplicate emails → provider-side idempotency key `welcome-{user_id}` → 0 duplicates (9 dedup hits) ✅
 - [x] Chore: Bruno collection runs headless — field-level asserts, 4 malformed JSON bodies fixed, confirm→cancel order; 15/15 requests, 49/49 asserts; `verify.ps1 -Bruno` ✅
 - [ ] Async no-blocking flows: notifications, PDF/export generation, reminders
-- [ ] Task modeling: signatures, `apply_async`, ETA/countdown, retries + backoff, idempotency
-- [ ] `beat` = scheduled jobs (e.g. daily reminder)
+- [x] Task modeling: retries + backoff ✅, idempotency ✅, ETA/countdown ✅ — long-ETA reminders crashed the worker (consumer_timeout) and reminded a cancelled appointment → beat DB scan
+- [x] `beat` = scheduled jobs: `send_due_reminders` scan (SKIP LOCKED, `reminder_sent_at`, key includes `scheduled_at`) ✅
 - [ ] Observability: flower or similar; task state/tracebacks
 - [ ] LEARNING.md log + interview section (Celery architecture, broker vs backend, retries, idempotency, ETA)
 
@@ -190,3 +190,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M3 | Welcome email: naive thread-per-request (crash 0/10, flaky 3/10) → Celery task on RabbitMQ with acks_late + retries (crash 10/10, flaky 10/10, 0 dupes); found kombu localhost→127.0.0.1 + silent publish-after-commit loss, competing consumers, thread-unsafe outbox | ✅ |
 | 2026-09-28 | M3 | Idempotency: worker killed between provider accept and ack → 9/10 duplicate emails → provider-enforced key `welcome-{user_id}` (exclusive create) → 0 duplicates, 9 dedup hits | ✅ |
 | 2026-09-28 | M1 | Bruno collection as contract: CLI run exposed substring asserts invalid in CLI 4.2.0, 4 malformed JSON bodies (422), cancel-before-confirm order → field asserts, fixed bodies/order (15/15, 49/49) + `verify.ps1 -Bruno` | ✅ |
+| 2026-09-28 | M3 | Reminders: naive long-ETA tasks (worker crashed on consumer_timeout, 0/3 sent; with 30 min timeout the cancelled appointment was reminded and the rescheduled one got the stale time) → `reminder_sent_at` migration + beat scan with SKIP LOCKED + scheduled_at-keyed idempotency (A/B/C all correct) + reschedule Bruno example | ✅ |

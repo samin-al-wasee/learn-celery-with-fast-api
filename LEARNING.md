@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (2 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates) + interview file
+- **M3 — Celery & async jobs** (3 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -308,6 +308,20 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"With acks_late, Celery gives at-least-once delivery, so a worker that dies after the side effect but before the ack makes the task run twice. I can't make the effect and the ack atomic, so I make the effect idempotent: every send carries a key derived from the business event, like welcome:user_id, and the receiver enforces it atomically, through a provider idempotency key or a unique constraint in the same transaction. Checking a flag in the task first doesn't work, because the crash can land between the check and the send."*
 - **Trap to avoid:** *"I'll check a Redis flag before sending"*: that check-then-act has its own crash window. Also avoid *"use the task id as the key"*: it misses duplicate publishes of the same event.
 
+### `2026-09-28 · M3` — reminders: long-ETA tasks → beat-driven DB scan
+
+- **What we did:** Appointment reminders (`REMINDER_LEAD_SECONDS` before `scheduled_at`). **Naive:** on booking, `send_reminder.apply_async(args=[id, scheduled_at], eta=scheduled_at - lead)`. **Fix:** migration `17208d1c2650` adds `appointments.reminder_sent_at`; **celery beat** runs `send_due_reminders` every `REMINDER_SCAN_SECONDS` (`app/worker/celery_app.py`, with `expires` so a down worker doesn't build a backlog of scans). The scan (`app/worker/tasks.py`) selects due rows (pending/confirmed, not reminded, `now < scheduled_at <= now + lead`) with `FOR UPDATE SKIP LOCKED`, sends with provider key `reminder-{id}-{scheduled_at}`, then sets `reminder_sent_at`. `PATCH` reschedule clears `reminder_sent_at`. Worker DB access goes through `app/worker/db.py` (`asyncio.run` + per-call `NullPool` engine). Observed with `scripts/observe_reminders.py naive|fixed [default-timeout]`: 3 appointments with reminders due at +80s; A kept, B cancelled, C rescheduled so its reminder is due at +50s.
+- **Observed (naive, RabbitMQ `consumer_timeout` lowered to 10s):** at t+20s the 3 ETA tasks sat **unacked in the worker's RAM**; at t+66s RabbitMQ's periodic check closed the channel and the worker died: `CRITICAL Unrecoverable error: PRECONDITION_FAILED - delivery acknowledgement on channel 1 timed out`. **0/3 reminders sent.**
+- **Observed (naive, default 30 min timeout):** A reminded at +80s ✓; **B reminded although cancelled**; **C reminded at +80s stating the old time** (16:50:41 instead of 16:50:11).
+- **Observed (fixed, same 10s timeout):** 0 channel kills; A 1 reminder at +81s; **B 0**; **C 1 at +51s stating the new time**. Regression: welcome-email crash 10/10, redeliver 0 duplicates; Bruno 16/16 requests, 53/53 asserts (new `reschedule-appointment.bru`).
+- **Lesson 1 — an ETA task is a frozen decision:** the message carries booking-time data, and cancel/reschedule change the DB, not a message already sitting in the broker. The truth about "is this still due, and for when?" lives in the database, so decide at send time by reading the DB.
+- **Lesson 2 — Celery ETA on RabbitMQ parks messages in the worker:** the worker prefetches the message, acknowledges nothing, and holds it in RAM until the ETA. With `acks_late` that runs into RabbitMQ's `consumer_timeout` (default 30 min), so any ETA/countdown longer than that kills the channel, and a supervised worker would crash-loop on redelivery. Long ETAs also consume worker memory and prefetch slots for every future reminder. Rule of thumb: ETA/countdown for seconds-to-minutes delays (retry backoff); a scheduler + DB state for anything hours or days out.
+- **Lesson 3 — the scan must be safe to overlap and to crash:** `SKIP LOCKED` lets two overlapping scans split the rows instead of double-sending; send-then-mark means a crash between the two re-sends on the next scan, and the provider key (`reminder-{id}-{scheduled_at}`) absorbs it. Including `scheduled_at` in the key is what lets a rescheduled appointment earn a *new* reminder.
+- **Lesson 4 — async DB from sync Celery:** asyncpg connections are bound to the event loop that opened them; each `asyncio.run()` is a new loop, so a pooled engine shared between task runs breaks. Per-call engine + `NullPool` is correct; the cost is one connection setup per scan, which is fine at one scan per minute.
+- **Trade-offs:** reminders are late by up to one scan interval (60s default); beat must run as exactly one process (two beats just double the scans, which SKIP LOCKED + keys tolerate). The scan sends inline, so one slow provider call delays the batch; fan-out to per-reminder tasks is the next step if volume grows.
+- **Interview answer:** *"For reminders days out I don't schedule a Celery task with a long ETA: the message freezes booking-time data, so cancels and reschedules are ignored, and on RabbitMQ the worker holds ETA messages unacked in memory, which trips the consumer timeout. Instead I store the state in the database and run a periodic beat task that selects due rows with SKIP LOCKED, sends with an idempotency key, and marks them sent. The database stays the source of truth and the queue only carries short-lived work."*
+- **Trap to avoid:** *"I'll revoke the ETA task when the appointment is cancelled"*: revokes are held in worker memory, get lost on restart, and don't handle reschedules. Also avoid *"ETA tasks are stored in the broker until they're due"*: with Celery on RabbitMQ they're delivered immediately and parked in the worker.
+
 ---
 
 ## M3 — Celery & async jobs — INTERVIEW FILE
@@ -320,6 +334,9 @@ Keep it as bullets, not essays.
 
 **Q3: How do you make a task idempotent?**
 > Give each side effect a key derived from the business event (`welcome:{user_id}`), and have the thing that performs the effect enforce it atomically: a provider idempotency key, or a unique constraint written in the same transaction as the effect. A separate "already done?" check before the effect has its own crash window.
+
+**Q4: How would you send a reminder 24 hours before an appointment?**
+> Not with a long ETA task: it freezes booking-time data (cancel/reschedule are ignored) and, on RabbitMQ, the worker holds it unacked in RAM until it's due, which trips `consumer_timeout`. I keep a `reminder_sent_at` column and run a beat task every minute that selects due rows with `SKIP LOCKED`, sends with an idempotency key, and marks them. We saw the ETA version remind a cancelled appointment and crash the worker; the scan version got all three cases right.
 
 **Trap answer to avoid:** *"Celery guarantees exactly-once"* or *"I'll just set `max_retries=0` to avoid duplicates"*: turning off retries doesn't stop redelivery after a worker crash, it only adds lost jobs.
 
