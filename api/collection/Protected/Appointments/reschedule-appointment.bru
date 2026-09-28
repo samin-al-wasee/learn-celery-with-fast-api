@@ -1,0 +1,34 @@
+meta {
+  name: Reschedule Appointment
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "scheduled_at": "{{reschedule_at}}"
+  }
+}
+
+script:pre-request {
+  const d = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  bru.setVar('reschedule_at', d.toISOString());
+}
+
+assert {
+  res.status: eq 200
+  res.body.error: isNull
+  res.body.data.id: eq {{appt_id}}
+  res.body.data.status: eq "confirmed"
+}
+
+docs {
+  Moves the appointment to +2h. Rescheduling clears reminder_sent_at (M3), so the beat
+  reminder scan sends a fresh reminder for the new time instead of a stale one for the old.
+}
