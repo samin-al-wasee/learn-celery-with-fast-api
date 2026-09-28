@@ -77,6 +77,7 @@ uvicorn app.main:app --reload              # API (from project root)
 celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows
 celery -A app.worker.celery_app flower --port=5555              # Flower UI; auth from FLOWER_BASIC_AUTH (flowerconfig.py)
 python -m app.consumers.notifications                          # M5 pika consumer (appointment.* events)
+python -m app.events.relay                                     # M6 outbox relay (publishes outbox_events)
 alembic upgrade head                       # apply migrations
 pytest                                     # run tests (once tests exist)
 .\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script> | -Bruno)

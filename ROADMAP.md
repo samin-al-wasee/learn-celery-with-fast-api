@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete.** Next up: M6 — transactional outbox (fixes the publish-after-commit gap seen in M3/M5), then service boundaries.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: transactional outbox done.** Next up: M6 event-driven flow (booked → chat room + reminder) and service boundaries.
 
 ---
 
@@ -127,7 +127,8 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [ ] Service boundaries: auth, patients/doctors (core), chat, notifications
 - [ ] Each service owns its data — no shared SQL tables across services
 - [ ] Inter-service communication: sync (HTTP/REST) vs async (events on RabbitMQ); the duality
-- [ ] Failures that only exist in distributed systems: timeouts, retries, partial failure, idempotency, saga patterns for multi-step transactions
+- [x] **Transactional outbox:** publish-after-commit lost 0/5 events with the broker down → `outbox_events` in the booking transaction + `app.events.relay` (5/5, booking 65 → 14 ms) ✅
+- [ ] Failures that only exist in distributed systems: timeouts, retries, partial failure, idempotency (✅ inbox/outbox), saga patterns for multi-step transactions
 - [ ] Event-driven flow: "appointment booked" event → chat created, notifications sent, reminder scheduled
 - [ ] API gateway + service discovery basics; observability (structured logs, tracing)
 - [ ] LEARNING.md log + interview section (sync vs async comms, saga, exactly-once is impossible, 2PC vs saga)
@@ -204,3 +205,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M5 | Event publisher: naive per-publish connection (102 ms, typo silently dropped, 0/20 after broker restart) → long-lived confirmed channel, mandatory, persistent (56 ms, UnroutableError, 20/20); API emits appointment.booked/cancelled end to end; latency breakdown (confirm round-trip ~48 ms) | ✅ |
 | 2026-09-28 | M5 | Backpressure: unbounded flood (depth 20,000) + booking hung 15s silently under a resource alarm → max-length/reject-publish policy via `scripts/rabbit_setup.py` + 2s blocked timeout (depth 1000, booking 201 in 2.2s, failure logged) | ✅ |
 | 2026-09-28 | M5 | Idempotent consumer: per-host markers → 11 rows for 10 events → `processed_events` inbox in the effect's transaction (10/10, 0 dupes) + `notifications` table + `GET /notifications`; Celery-vs-raw map; M5 interview file. **M5 complete** | ✅ |
+| 2026-09-28 | M6 | Transactional outbox: publish-after-commit with the broker down (5× 201, 0/5 events ever delivered) → `outbox_events` staged in the same transaction + relay process with SKIP LOCKED (5/5 after recovery; booking 65 → 14 ms) | ✅ |

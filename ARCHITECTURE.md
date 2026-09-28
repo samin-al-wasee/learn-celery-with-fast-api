@@ -74,7 +74,7 @@ Introduce Celery worker + RabbitMQ broker + Redis result backend.
                   (broker)     (retries, ETA, beat schedule)
 ```
 
-### Phase 3 — Realtime chat (planned M4)
+### Phase 3 — Realtime chat (M4, done)
 WebSockets terminate in FastAPI; Redis pub/sub carries messages across workers so any worker can reach any connected client.
 ```
  Client A ──ws──▶ Worker1 ──publish──▶ Redis pub/sub ──sub──▶ Worker2 ──ws──▶ Client B
@@ -152,6 +152,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | API publishes domain events (`appointment.booked`/`cancelled`) to topic exchange `cardicheck.events` with confirms, `mandatory`, persistent messages, one long-lived channel per process | Connection per publish, fire-and-forget | Observed silent drops on a routing-key typo and 0/20 messages after a broker restart; publishing after commit still has the M6 outbox gap |
 | 2026-09-28 | Event queues bounded by policy (`max-length` 1000, `reject-publish`, applied by `scripts/rabbit_setup.py`); publishers use `blocked_connection_timeout` 2s | Unbounded queues; publishers that wait on flow control | Observed 20,000-deep backlog and a booking request hanging 15s with nothing logged while the broker blocked publishers |
 | 2026-09-28 | Consumers are idempotent via a `processed_events` inbox row inserted in the same transaction as the side effect; ack after commit | Local marker files; Redis `SET NX` | Observed a cross-host duplicate with markers; Redis is our evicting cache and isn't atomic with Postgres |
+| 2026-09-28 | Domain events go through a transactional outbox (`outbox_events` in the business transaction) and a relay process; the request path never talks to RabbitMQ | Publish after commit (M5) | Observed 0/5 events delivered for bookings made while the broker was down; outbox gave 5/5 and cut booking latency 65 → 14 ms |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

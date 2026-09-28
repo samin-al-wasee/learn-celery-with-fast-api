@@ -29,7 +29,7 @@ Keep it as bullets, not essays.
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
-- **M6 — Microservices / distributed systems** (empty)
+- **M6 — Microservices / distributed systems** (1 entry: transactional outbox + relay)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
 
@@ -509,6 +509,22 @@ Keep it as bullets, not essays.
 > RabbitMQ is a broker with per-message acks, routing and DLQs: good for work queues and event routing. Kafka is a replicated, replayable log with consumer offsets: good for high-throughput streams and replaying history. Redis pub/sub is fire-and-forget with no persistence: fine for live fan-out (our chat), never for anything that must not be lost.
 
 **Trap answer to avoid:** *"We made the queue durable, so we can't lose messages"*: auto-ack consumers, non-persistent messages, unconfirmed publishes and unroutable keys all lose messages from a durable queue.
+
+---
+
+## M6 — Microservices / distributed systems
+
+### `2026-09-28 · M6` — transactional outbox: publish-after-commit → event row in the same transaction + relay
+
+- **What we did:** `outbox_events` (migration `55aafeb5df8c`: unique `event_id`, `routing_key`, JSONB `payload`, `published_at`, `attempts`, `last_error`; partial index on unpublished rows). Booking/cancel now call `app/events/outbox.py:stage()` inside their transaction (`flush` → stage → `commit`); the request no longer talks to RabbitMQ. `python -m app.events.relay` claims unpublished rows in id order (`FOR UPDATE SKIP LOCKED`, batch 100), publishes each with the confirmed publisher, sets `published_at`, and on a broker error records `attempts`/`last_error` and backs off. Observed with `scripts/observe_outbox.py naive|fixed`: a probe queue bound to `appointment.booked`; 5 bookings with the broker up, then `docker compose stop rabbitmq`, 5 more bookings, start RabbitMQ, count which broker-down bookings ever produced an event.
+- **Observed (naive):** broker up: median booking **65 ms**; broker down: all 5 bookings **201**, but events delivered after recovery **0/5**, API log 5× `event not published`. The appointments exist; nobody downstream will ever hear about them.
+- **Observed (fixed):** broker up: median booking **14 ms**; broker down: 5× 201 at 12 ms; after recovery **5/5** delivered; relay log: `broker unavailable; events stay in the outbox` … `published 10 event(s)`. Bruno 22/22, 76/76.
+- **Lesson 1 — dual writes can't be made safe by ordering:** publish-then-commit announces appointments that may roll back; commit-then-publish loses events whenever the broker (or the process) fails in between. The only fix is one write: the event becomes a row in the same transaction as the state change, and delivery becomes a separate retryable job.
+- **Lesson 2 — the outbox is at-least-once, by design:** the relay can publish and crash before marking the row, so the event goes out again. That's why the M5 inbox exists: producer outbox + consumer inbox = exactly-once *effects*.
+- **Lesson 3 — the request path got faster and more available:** booking no longer waits for a confirm round-trip (65 → 14 ms) and no longer depends on RabbitMQ being up or unblocked (the M5 backpressure hang can't reach users). The cost is delivery latency of up to one relay interval and one more process to run and monitor (watch the count of unpublished rows and their age).
+- **Design notes:** SKIP LOCKED allows several relays but then cross-relay order isn't guaranteed (per-aggregate ordering would need partitioning by appointment); published rows need a retention job; CDC (e.g. Debezium reading the WAL) is the no-polling alternative.
+- **Interview answer:** *"I never publish an event and commit a database change as two separate steps, because either order loses or invents events when something fails in between. With a transactional outbox the service writes the event into an outbox table in the same transaction as the business change, and a relay publishes unpublished rows to the broker and marks them. If the broker is down, events wait in the table. The relay is at-least-once, so consumers are idempotent with an inbox."*
+- **Trap to avoid:** *"Wrap the publish in the DB transaction"*: the broker isn't part of the transaction; a commit can still fail after the publish succeeded. Also avoid *"retry the publish in the request"*: it blocks the user and still loses the event if the process dies.
 
 ---
 
