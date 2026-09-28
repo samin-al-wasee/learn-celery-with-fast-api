@@ -40,5 +40,7 @@ script:post-response {
 }
 
 docs {
+  Checks the availability service first (2s timeout + circuit breaker); if it's down the booking
+  still succeeds as pending with meta.warnings = ["availability_unchecked"] (M6).
   Publishes an appointment.booked event to the cardicheck.events topic exchange: written to outbox_events in the booking's transaction and published by python -m app.events.relay (M6).
 }

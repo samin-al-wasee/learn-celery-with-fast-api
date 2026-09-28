@@ -1,0 +1,26 @@
+meta {
+  name: Check Availability
+  type: http
+  seq: 1
+  tags: [
+    internal
+  ]
+}
+
+get {
+  url: {{availabilityUrl}}/availability?doctor_id=1&at=2030-01-01T09:00:00Z
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.available: isBoolean
+}
+
+docs {
+  Availability service (M6), run with: uvicorn services.availability.main:app --port 8100.
+  Booking calls it with a 2s timeout behind a circuit breaker; on failure the booking is
+  accepted as pending with meta.warnings = ["availability_unchecked"].
+  Headless check: python scripts/observe_sync_calls.py
+}
