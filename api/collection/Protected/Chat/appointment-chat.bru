@@ -24,7 +24,9 @@ body:ws {
 docs {
   Doctor/patient chat for one appointment (M4). The first frame must be
   {"type": "auth", "token": "<jwt>"} within 5s (never ?token= in the URL: uvicorn logs the path);
-  then send {"type": "message", "text": "hi"}. Non-participants are closed with 1008.
+  (add "last_seen_id": <id> on reconnect to replay what you missed), then send
+  {"type": "message", "text": "hi", "client_msg_id": "<uuid>"}; a retry with the same
+  client_msg_id is stored once and answered with {"type": "ack"}. Non-participants are closed with 1008.
   Messages fan out across API processes via Redis pub/sub.
   Bruno CLI 4.2 does not execute ws requests; run this in the Bruno app.
   Headless check: python scripts/observe_chat.py.

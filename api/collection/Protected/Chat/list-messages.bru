@@ -1,0 +1,24 @@
+meta {
+  name: List Chat Messages
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}/messages?limit=50
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.error: isNull
+  res.body.data: isArray
+  res.body.meta: isDefined
+}
+
+docs {
+  Chat history for one appointment (M4), newest first, keyset-paged: pass
+  meta.next_before_id back as ?before_id= for the next page (null = no more).
+  Participants only (403 NOT_PARTICIPANT).
+}
