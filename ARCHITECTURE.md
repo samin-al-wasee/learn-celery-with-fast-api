@@ -150,6 +150,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Chat = Postgres log (store, then publish) + pub/sub for live delivery + replay on reconnect | Pub/sub as the only path | Observed 0/5 catch-up and 2× retried sends with pub/sub alone; the log gives durability, ordering (DB id) and idempotency |
 | 2026-09-28 | Hand-written consumers ack after work, `prefetch_count=10`, poison → reject(requeue=False) → DLX `cardicheck.dlx` → `*.dlq`; handlers idempotent on `event_id` | auto_ack, unbounded prefetch, requeue on failure | Observed 86/99 lost on a crash and a poison-message crash losing 49; requeueing poison would hot-loop |
 | 2026-09-28 | API publishes domain events (`appointment.booked`/`cancelled`) to topic exchange `cardicheck.events` with confirms, `mandatory`, persistent messages, one long-lived channel per process | Connection per publish, fire-and-forget | Observed silent drops on a routing-key typo and 0/20 messages after a broker restart; publishing after commit still has the M6 outbox gap |
+| 2026-09-28 | Event queues bounded by policy (`max-length` 1000, `reject-publish`, applied by `scripts/rabbit_setup.py`); publishers use `blocked_connection_timeout` 2s | Unbounded queues; publishers that wait on flow control | Observed 20,000-deep backlog and a booking request hanging 15s with nothing logged while the broker blocked publishers |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

@@ -70,6 +70,7 @@ Be explicit, concise, concrete. Give the `file:line` references.
 
 ```powershell
 docker compose up -d                       # infra: postgres, redis, rabbitmq
+python scripts/rabbit_setup.py             # RabbitMQ policies (bounded event queues); run after compose up
 docker compose down                        # stop
 docker compose ps                          # status
 uvicorn app.main:app --reload              # API (from project root)

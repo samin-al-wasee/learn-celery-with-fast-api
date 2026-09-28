@@ -54,6 +54,7 @@ Guided-learning workflow: see [`AI_WORKFLOW.md`](AI_WORKFLOW.md)
 
 ```powershell
 docker compose up -d            # start postgres, redis, rabbitmq
+python scripts/rabbit_setup.py             # RabbitMQ policies (bounded event queues); run after compose up
 python -m venv .venv            # first time only
 .venv\Scripts\Activate.ps1      # activate (PowerShell)
 pip install -r requirements.txt # first time only

@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX) and publisher (confirms/mandatory/persistent, topic routing) done.** Next up: M5 backpressure + queue length limits.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), Backpressure done.** Next up: M5 idempotent consumer (inbox table) + Celery-vs-raw comparison, then M6.
 
 ---
 
@@ -112,7 +112,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Publisher side: naive per-publish connection (102 ms), silent drop on typo, 0/20 after broker restart → confirms + mandatory (UnroutableError) + persistent (20/20) ✅
 - [x] Manual publish/consume (pika): auto-ack + no prefetch lost 86/99 on kill and 49/99 on poison → manual ack, prefetch 10, reject → DLX/DLQ → 99/99, poison dead-lettered ✅
 - [ ] Delivery semantics: at-least-once in practice → dedup/idempotency with Redis
-- [ ] Backpressure, flow control, queue length monitoring
+- [x] Backpressure: flood → depth 20,000 and booking hung 15s under a resource alarm → `bounded-event-queues` policy (max-length 1000, reject-publish) + `blocked_connection_timeout` 2s → depth 1000, booking 201 in 2.2s ✅ (Celery's publish path under an alarm: unverified, M8)
 - [ ] Relating it back: show exactly which parts Celery abstracts and which it doesn't
 - [ ] LEARNING.md log + interview section (delivery guarantees, DLQ, prefetch, when to use RabbitMQ vs Kafka vs Redis pub/sub)
 
@@ -201,3 +201,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M4 | Chat history: pub/sub only (reconnect catch-up 0/5, retried send 2×, no ids) → `chat_messages` log (migration `620d4cee556c`) + subscribe-then-replay `last_seen_id` (5/5) + unique sender+client_msg_id (1×) + keyset history endpoint; Bruno 21/21. **M4 complete** | ✅ |
 | 2026-09-28 | M5 | pika consumer: naive auto-ack + unbounded prefetch (kill → 86/99 lost; poison → crash, 49 lost) → manual ack + prefetch 10 + reject→DLX (99/99, DLQ 1, 0 crashes); queue-arg redeclare PRECONDITION_FAILED observed | ✅ |
 | 2026-09-28 | M5 | Event publisher: naive per-publish connection (102 ms, typo silently dropped, 0/20 after broker restart) → long-lived confirmed channel, mandatory, persistent (56 ms, UnroutableError, 20/20); API emits appointment.booked/cancelled end to end; latency breakdown (confirm round-trip ~48 ms) | ✅ |
+| 2026-09-28 | M5 | Backpressure: unbounded flood (depth 20,000) + booking hung 15s silently under a resource alarm → max-length/reject-publish policy via `scripts/rabbit_setup.py` + 2s blocked timeout (depth 1000, booking 201 in 2.2s, failure logged) | ✅ |
