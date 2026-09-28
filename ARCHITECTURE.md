@@ -63,7 +63,7 @@ Client ──▶ FastAPI (one process) ──▶ Postgres
 ### Phase 2 — Async-first monolith (M3, in progress)
 Introduce Celery worker + RabbitMQ broker + Redis result backend.
 
-**Current (M3):** `POST /auth/signup` enqueues `send_welcome_email` (`app/worker/tasks.py`) on RabbitMQ; workers run with `acks_late` + `reject_on_worker_lost` + prefetch 1 (at-least-once), autoretry with exponential backoff + jitter. No result backend yet (`task_ignore_result`). Known gap: publish happens after the DB commit, so a broker outage loses the job (logged, not retried) → transactional outbox in M6.
+**Current (M3):** `POST /auth/signup` enqueues `send_welcome_email` (`app/worker/tasks.py`) on RabbitMQ; workers run with `acks_late` + `reject_on_worker_lost` + prefetch 1 (at-least-once), autoretry with exponential backoff + jitter. No result backend yet (`task_ignore_result`). Side effects carry an idempotency key from the business event (`welcome-{user_id}`) that the provider enforces, so redelivery can't double-send. Known gap: publish happens after the DB commit, so a broker outage loses the job (logged, not retried) → transactional outbox in M6.
 ```
                   ┌────────────────────────────┐
                   │  FastAPI  (request path)   │  ──▶ Postgres, Redis

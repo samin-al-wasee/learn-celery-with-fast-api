@@ -26,7 +26,7 @@ Keep it as bullets, not essays.
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
-- **M3 — Celery & async jobs** (1 entry: thread-per-request → Celery acks_late + retries)
+- **M3 — Celery & async jobs** (2 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
@@ -281,6 +281,35 @@ Keep it as bullets, not essays.
 - **Found along the way:** the Bruno CLI 4.2.0 fails every existing `res.body: contains "..."` assert (it won't run `contains` on an object body), on untouched requests like login too. Only `status` and the new `responseTime` asserts pass in the CLI. Logged as a ROADMAP chore.
 - **Interview answer:** *"Background work doesn't belong in a thread inside the web process: it dies with the process, can't retry and can't be observed. I publish a task to a broker like RabbitMQ and run it on separate Celery workers. With acks_late the message is only acked after success, so a worker crash means redelivery, which gives at-least-once delivery, so the task must be idempotent. And publishing after the DB commit can still lose the job if the broker is down; the full fix is a transactional outbox."*
 - **Trap to avoid:** *"Celery guarantees my task runs exactly once"*: it's at-most-once with default early acks and at-least-once with `acks_late`, never exactly-once. Also avoid *"FastAPI BackgroundTasks is the same thing"*: it runs in the same process after the response, so it's just as mortal as the thread.
+
+---
+
+### `2026-09-28 · M3` — idempotency: at-least-once redelivery → duplicate emails → provider-side idempotency key
+
+- **What we did:** Added `EMAIL_ACK_SECONDS` (the provider has accepted the email but its OK hasn't reached us yet: the classic "SMTP accepted, connection dropped before 250" window) and a `redeliver` scenario to `scripts/observe_email_jobs.py`: the worker is hard-killed 3s after 10 signups (all sends landed, none acked), then restarted. **Fix:** `deliver_welcome_email` (`app/services/email.py`) sends under the idempotency key `welcome-{user_id}`; the fake provider creates the message with exclusive create (`open("x")`), so a second send of the same key is a logged no-op (`duplicate suppressed`).
+- **Observed (naive):** **9 duplicates** out of 10 users: every task whose send had landed was redelivered by RabbitMQ (unacked because of `acks_late`) and sent again.
+- **Observed (fixed):** **0 duplicates**; the provider logged **9 dedup hits** after redelivery. Regression: crash 10/10, flaky 10/10.
+- **Lesson 1 — you can't make "side effect + ack" atomic:** ack before the effect → a crash loses the job (at-most-once); ack after → a crash repeats it (at-least-once). Exactly-once *delivery* doesn't exist; exactly-once *effect* = at-least-once delivery + an idempotent receiver.
+- **Lesson 2 — the dedup check must be atomic with the side effect:** a "did I already send?" check in the task (DB flag, Redis `SET NX`) is a separate step from the send, so a crash between the two either loses the email (flag set first) or duplicates it (flag set after). The check has to live where the effect happens: an idempotency key the provider enforces (like Stripe's `Idempotency-Key`, SES/SQS dedup IDs), or a unique constraint in the same DB transaction as the effect.
+- **Lesson 3 — derive the key from the business event, not the task id:** redeliveries and retries keep the Celery task id, but a double publish (client retry, replayed outbox) creates a new id for the same event. `welcome:{user_id}` names *the fact* ("this user was welcomed"), so every path to a second send collapses to one.
+- **Scope note:** a dedup key stored in our `allkeys-lru` cache Redis would be wrong: eviction would silently forget it. Dedup state needs durable storage (Postgres unique constraint, or a non-evicting Redis with a TTL longer than the redelivery window).
+- **Interview answer:** *"With acks_late, Celery gives at-least-once delivery, so a worker that dies after the side effect but before the ack makes the task run twice. I can't make the effect and the ack atomic, so I make the effect idempotent: every send carries a key derived from the business event, like welcome:user_id, and the receiver enforces it atomically, through a provider idempotency key or a unique constraint in the same transaction. Checking a flag in the task first doesn't work, because the crash can land between the check and the send."*
+- **Trap to avoid:** *"I'll check a Redis flag before sending"*: that check-then-act has its own crash window. Also avoid *"use the task id as the key"*: it misses duplicate publishes of the same event.
+
+---
+
+## M3 — Celery & async jobs — INTERVIEW FILE
+
+**Q1: Why not run background work in a thread or FastAPI `BackgroundTasks`?**
+> Both run inside the web process, so the job lives only in memory: a deploy, crash or scale-down deletes it, failures can't be retried, and nothing records what's pending. A broker turns the job into a durable message that separate workers consume, retry and report on. We measured it: API killed mid-send → 0/10 delivered with threads, 10/10 with Celery and `acks_late`.
+
+**Q2: What delivery guarantee does Celery give you?**
+> It depends on when the message is acked. By default it's acked on receipt, so a worker crash loses the task (at-most-once). With `acks_late` it's acked after the task finishes, so a crash means redelivery (at-least-once), and the task can run twice. There is no exactly-once delivery; you get exactly-once effects by making tasks idempotent.
+
+**Q3: How do you make a task idempotent?**
+> Give each side effect a key derived from the business event (`welcome:{user_id}`), and have the thing that performs the effect enforce it atomically: a provider idempotency key, or a unique constraint written in the same transaction as the effect. A separate "already done?" check before the effect has its own crash window.
+
+**Trap answer to avoid:** *"Celery guarantees exactly-once"* or *"I'll just set `max_retries=0` to avoid duplicates"*: turning off retries doesn't stop redelivery after a worker crash, it only adds lost jobs.
 
 ---
 

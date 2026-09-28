@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3 started: thread-per-request → Celery (acks_late + retries) done.** Next up: M3 idempotency (at-least-once double sends).
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. Idempotency done.** Next up: M3 task modeling (ETA/countdown), then beat + observability.
 
 ---
 
@@ -77,7 +77,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Naive:** ad-hoc `threading.Thread` per request for background work — welcome email on signup
 - [x] **Observations:** API killed mid-send → 0/10 delivered; 50% SMTP failure → 3/10, no retries, only stderr tracebacks
 - [x] Celery app + worker + RabbitMQ broker: `acks_late` + retries → worker killed mid-send 10/10, flaky 10/10 ✅ (result backend deferred: separate Redis, see ARCHITECTURE)
-- [ ] Idempotency: at-least-once redelivery can double-send → dedup key per email
+- [x] Idempotency: worker killed after send, before ack → 9 duplicate emails → provider-side idempotency key `welcome-{user_id}` → 0 duplicates (9 dedup hits) ✅
 - [ ] Chore: Bruno `res.body: contains` asserts fail in Bruno CLI 4.2.0 → rewrite as `res.body.data.<field>` asserts
 - [ ] Async no-blocking flows: notifications, PDF/export generation, reminders
 - [ ] Task modeling: signatures, `apply_async`, ETA/countdown, retries + backoff, idempotency
@@ -188,3 +188,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M2 | TTL strategy: fixed TTL → synchronized expiry (200 keys in 1s) → ±10% jitter in `cache_set` (13s window, peak 200 → 30) | ✅ |
 | 2026-09-28 | M2 | Memory limits + fail-open: full Redis (`noeviction`) and Redis down → `GET /users/me` 500 → fail-open cache helpers (0.5s timeouts) + `maxmemory 128mb allkeys-lru` → 200 in all three cases | ✅ |
 | 2026-09-28 | M3 | Welcome email: naive thread-per-request (crash 0/10, flaky 3/10) → Celery task on RabbitMQ with acks_late + retries (crash 10/10, flaky 10/10, 0 dupes); found kombu localhost→127.0.0.1 + silent publish-after-commit loss, competing consumers, thread-unsafe outbox | ✅ |
+| 2026-09-28 | M3 | Idempotency: worker killed between provider accept and ack → 9/10 duplicate emails → provider-enforced key `welcome-{user_id}` (exclusive create) → 0 duplicates, 9 dedup hits | ✅ |
