@@ -153,6 +153,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Event queues bounded by policy (`max-length` 1000, `reject-publish`, applied by `scripts/rabbit_setup.py`); publishers use `blocked_connection_timeout` 2s | Unbounded queues; publishers that wait on flow control | Observed 20,000-deep backlog and a booking request hanging 15s with nothing logged while the broker blocked publishers |
 | 2026-09-28 | Consumers are idempotent via a `processed_events` inbox row inserted in the same transaction as the side effect; ack after commit | Local marker files; Redis `SET NX` | Observed a cross-host duplicate with markers; Redis is our evicting cache and isn't atomic with Postgres |
 | 2026-09-28 | Domain events go through a transactional outbox (`outbox_events` in the business transaction) and a relay process; the request path never talks to RabbitMQ | Publish after commit (M5) | Observed 0/5 events delivered for bookings made while the broker was down; outbox gave 5/5 and cut booking latency 65 → 14 ms |
+| 2026-09-28 | Booking calls the availability service over HTTP with a 2s deadline, after releasing its DB connection, behind a per-process circuit breaker; failures degrade to a pending booking with `meta.warnings` | No timeout, connection held across the call | Observed an unrelated endpoint stall 19.5s from pool exhaustion; the check is advisory because the doctor confirms every booking |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: transactional outbox done.** Next up: M6 event-driven flow (booked → chat room + reminder) and service boundaries.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: transactional outbox, sync-call resilience done.** Next up: M6 saga (multi-step booking with compensation) and service boundaries.
 
 ---
 
@@ -126,9 +126,9 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [ ] **Naive:** "microservice" = monolith copied into more containers sharing one DB/port conflict → observation: coupling, race conditions
 - [ ] Service boundaries: auth, patients/doctors (core), chat, notifications
 - [ ] Each service owns its data — no shared SQL tables across services
-- [ ] Inter-service communication: sync (HTTP/REST) vs async (events on RabbitMQ); the duality
+- [x] Inter-service communication: sync HTTP to the availability service (naive no-timeout call held DB connections → unrelated `/users/me` 19.5s; fixed: release + 2s timeout + degrade + circuit breaker → 0.03s) vs async events (outbox) ✅
 - [x] **Transactional outbox:** publish-after-commit lost 0/5 events with the broker down → `outbox_events` in the booking transaction + `app.events.relay` (5/5, booking 65 → 14 ms) ✅
-- [ ] Failures that only exist in distributed systems: timeouts, retries, partial failure, idempotency (✅ inbox/outbox), saga patterns for multi-step transactions
+- [ ] Failures that only exist in distributed systems: timeouts ✅, partial failure ✅ (degrade + breaker), idempotency ✅ (inbox/outbox), retries, saga patterns for multi-step transactions
 - [ ] Event-driven flow: "appointment booked" event → chat created, notifications sent, reminder scheduled
 - [ ] API gateway + service discovery basics; observability (structured logs, tracing)
 - [ ] LEARNING.md log + interview section (sync vs async comms, saga, exactly-once is impossible, 2PC vs saga)
@@ -150,7 +150,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Milestone 8 — Senior hardening / review sweep
 
-- [ ] Dedup, retries, circuit breakers, rate limiting, backpressure — revisit each topic's caveat
+- [ ] Dedup, retries, circuit breakers (per-process breaker done in M6; shared breaker todo), rate limiting, backpressure — revisit each topic's caveat
 - [ ] Observability: structured logs, metrics, distributed tracing across services
 - [ ] Seeding/load-testing the failure modes we only simulated earlier
 - [ ] Revise all `LEARNING.md` interview sections into a final interview-prep cheat sheet
@@ -206,3 +206,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M5 | Backpressure: unbounded flood (depth 20,000) + booking hung 15s silently under a resource alarm → max-length/reject-publish policy via `scripts/rabbit_setup.py` + 2s blocked timeout (depth 1000, booking 201 in 2.2s, failure logged) | ✅ |
 | 2026-09-28 | M5 | Idempotent consumer: per-host markers → 11 rows for 10 events → `processed_events` inbox in the effect's transaction (10/10, 0 dupes) + `notifications` table + `GET /notifications`; Celery-vs-raw map; M5 interview file. **M5 complete** | ✅ |
 | 2026-09-28 | M6 | Transactional outbox: publish-after-commit with the broker down (5× 201, 0/5 events ever delivered) → `outbox_events` staged in the same transaction + relay process with SKIP LOCKED (5/5 after recovery; booking 65 → 14 ms) | ✅ |
+| 2026-09-28 | M6 | Sync service call: availability service; naive no-timeout call while holding a DB connection (unrelated `/users/me` 19.5s) → release + 2s deadline + degrade with `meta.warnings` + circuit breaker (0.03s; dead dependency: 3×2.1s then 0.01s) | ✅ |
