@@ -28,7 +28,7 @@ Keep it as bullets, not essays.
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
-- **M5 — RabbitMQ deep dive** (2 entries: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout)
+- **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
 - **M6 — Microservices / distributed systems** (empty)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
@@ -458,6 +458,57 @@ Keep it as bullets, not essays.
 - **Lesson 3 — failing fast still loses the event:** the booking now returns, but `appointment.booked` is only logged, not delivered. That's the publish-after-commit gap again; the transactional outbox (M6) makes the event durable in Postgres and lets a relay retry when the broker recovers.
 - **Interview answer:** *"RabbitMQ applies backpressure by blocking publishers when it hits a memory or disk alarm, and a synchronous publisher without a timeout just hangs your request. I cap queues with a max-length policy using reject-publish so one backlog can't alarm the whole broker, set a blocked-connection timeout so publishers fail fast, monitor queue depth, and move publishing off the request path with an outbox so a slow broker never blocks users."*
 - **Trap to avoid:** *"The broker will buffer it"*: it buffers until an alarm, then it blocks every publisher on the node, including unrelated ones like Celery.
+
+---
+
+### `2026-09-28 · M5` — idempotent consumer: per-host marker files → inbox table in the same transaction
+
+- **What we did:** The consumer's side effect is now real: an in-app **notification row** per event (migration `ee2139b8de14`: `notifications` + `processed_events`), readable via new `GET /api/v1/notifications` (keyset-paged). **Naive:** dedup by a marker file on the consumer's disk, written after the DB insert. **Fix (inbox pattern):** in one transaction, `INSERT INTO processed_events (event_id) ON CONFLICT DO NOTHING RETURNING`; only if the row was claimed, insert the notification; commit; *then* ack. Observed with `scripts/observe_inbox.py`: 10 events; consumer A ("host A", `NOTIFY_ACK_DELAY_SECONDS=3`) applies the first and is killed before acking; consumer B ("host B", its own marker dir) gets the redelivery.
+- **Observed (naive):** 10 events → **11 notification rows, 1 duplicate**: host B couldn't see host A's marker.
+- **Observed (fixed):** 10 events → **10 rows, 0 duplicates**, host B logged **1 "duplicate suppressed"**. Regression `observe_consumer.py`: 99/99, DLQ 1, 0 crashes, and this time the kill landed between commit and ack, so **1 duplicate was suppressed** by the inbox. Bruno: new `list-notifications.bru`; collection 22/22, 76/76.
+- **Lesson 1 — the dedup record must live with the effect:** a marker on local disk (or in Redis) and a row in Postgres are two stores; no crash-safe ordering of two writes exists, and other hosts can't see a local file. Put the "processed" record in the same database and the same transaction as the side effect: both commit or neither does.
+- **Lesson 2 — why not Redis for dedup here:** the roadmap suggested Redis. Our Redis is an `allkeys-lru` cache (M2), so eviction would silently forget processed ids; and a Redis `SET NX` still isn't atomic with the Postgres insert. Redis dedup fits when the side effect isn't in a DB you control, with a non-evicting instance and a TTL longer than the redelivery window.
+- **Lesson 3 — inbox vs a unique constraint on the effect:** if an event produces exactly one row, a unique `event_id` on that row is enough. The inbox table generalizes to handlers with several effects (or none), and records which consumer applied what.
+- **Interview answer:** *"RabbitMQ with manual acks is at-least-once, so the consumer has to be idempotent. I use an inbox table: in the same database transaction as the side effect I insert the event id with ON CONFLICT DO NOTHING, and only apply the effect if that insert won; then commit and ack. A redelivery, even to another instance, hits the primary key and does nothing. That's the consumer half of exactly-once effects; the transactional outbox is the producer half."*
+- **Trap to avoid:** *"Check whether we've seen the id, then process"* as two steps (race + crash window), or keeping processed ids in a local set / evicting cache.
+
+### `2026-09-28 · M5` — what Celery abstracts over RabbitMQ (mapped to what we measured)
+
+| Concern | Raw pika (what we built) | Celery / kombu | Where we saw it |
+|---|---|---|---|
+| Connection + channel reuse | `EventPublisher`, one channel behind a lock | pooled producers | naive per-publish connection 102 ms |
+| Ack timing | manual `basic_ack` after commit | `task_acks_late=True` (default: ack on receipt) | M3 crash 0/10 → 10/10; M5 auto-ack lost 86/99 |
+| Prefetch | `basic_qos(prefetch_count=10)` | `worker_prefetch_multiplier` × concurrency | M5 unbounded prefetch pulled all 100 |
+| Poison / failures | `reject(requeue=False)` → DLX/DLQ | task raises → FAILURE state; no DLQ unless you configure queue args/policies | M5 poison crash lost 49 |
+| Retries | none (dead-letter; retries are M8) | `autoretry_for`, backoff, jitter | M3 flaky 3/10 → 10/10 |
+| Publisher confirms | `confirm_delivery()` + `mandatory` | off by default (kombu `confirm_publish` transport option; **not measured here**) | M5 typo dropped silently |
+| Persistence | `delivery_mode=Persistent` | persistent by default | M5 broker restart 0/20 → 20/20 |
+| Routing | our topic exchange + bindings | default direct exchange `celery`, `task_routes` | M5 notifications 1 / audit 2 |
+| Delayed work | none | ETA/countdown (held unacked in the worker) | M3 consumer_timeout crash |
+| Idempotency | inbox table | **your job** in both | M3 welcome key, M5 inbox |
+
+- **Takeaway:** Celery is a task-execution framework (function calls, retries, results) built on AMQP; raw RabbitMQ is for *events* many independent consumers subscribe to. We use both: Celery for "do this job", the topic exchange for "this happened".
+
+---
+
+## M5 — RabbitMQ — INTERVIEW FILE
+
+**Q1: What delivery guarantees does RabbitMQ give, and how do you get "exactly once"?**
+> With manual acks after processing it's at-least-once: a crash before the ack redelivers. Auto-ack is at-most-once (we lost 86 of 99 on a crash). Exactly-once *delivery* doesn't exist; you get exactly-once *effects* with a transactional outbox on the producer and an inbox/idempotency key on the consumer.
+
+**Q2: How do you make publishing reliable?**
+> Publisher confirms so the broker acknowledges each message, `mandatory` so unroutable messages come back as errors, persistent messages on durable queues so a broker restart keeps them (we saw 0/20 → 20/20), and a long-lived channel rather than a connection per publish.
+
+**Q3: What happens when consumers can't keep up?**
+> The queue grows until the broker hits a memory or disk alarm, and then RabbitMQ blocks *every* publishing connection, so synchronous publishers hang (our booking hung 15s silently). Cap queues with a max-length policy (`reject-publish`), set a blocked-connection timeout, alert on queue depth, add consumers (prefetch spreads the load), and keep publishing off the request path.
+
+**Q4: Exchange types?**
+> Direct routes on an exact key; topic on patterns (`appointment.*`, `#`); fanout copies to every bound queue; headers matches on message headers. Topic exchanges let new consumers subscribe by adding a binding without touching publishers.
+
+**Q5: RabbitMQ vs Kafka vs Redis pub/sub?**
+> RabbitMQ is a broker with per-message acks, routing and DLQs: good for work queues and event routing. Kafka is a replicated, replayable log with consumer offsets: good for high-throughput streams and replaying history. Redis pub/sub is fire-and-forget with no persistence: fine for live fan-out (our chat), never for anything that must not be lost.
+
+**Trap answer to avoid:** *"We made the queue durable, so we can't lose messages"*: auto-ack consumers, non-persistent messages, unconfirmed publishes and unroutable keys all lose messages from a durable queue.
 
 ---
 
