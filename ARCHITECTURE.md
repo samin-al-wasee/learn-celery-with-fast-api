@@ -81,6 +81,8 @@ WebSockets terminate in FastAPI; Redis pub/sub carries messages across workers s
 ```
 Redis pub/sub is a *bus*, not a queue — no persistence, no acks. That limitation becomes our lesson.
 
+**Current (M4):** `WS /api/v1/ws/appointments/{id}/chat` — first-frame auth, participants only (1008 otherwise). `app/realtime/hub.py` publishes to `chat:appointment:{id}`; each API process subscribes once per room with local sockets (subscription confirmed before join returns) and forwards to them. Messages are not persisted yet.
+
 ### Phase 4 — Microservices (planned M6)
 Broken into services, each owning its data:
 ```
@@ -144,6 +146,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Scheduled work = beat + DB state scan; ETA/countdown only for short delays | Long-ETA Celery tasks per reminder | ETA messages freeze booking-time data and sit unacked in worker RAM, tripping RabbitMQ `consumer_timeout` (observed crash); the DB is the source of truth for what's due |
 | 2026-09-28 | Async job status in a DB table with owner + explicit states; no Celery result backend for app state | `AsyncResult(task_id).state` on Redis | Observed: unknown ids read as PENDING, any user could read any result, eviction turned a finished job back into PENDING. App state needs ownership and durability. |
 | 2026-09-28 | Task events on + Flower behind basic auth (`flowerconfig.py`), queue depth from RabbitMQ management API | Flower with defaults | Defaults showed 0 tasks and no backlog; opened up, it exposed task args. Flower is a live, in-memory view; history lives in logs/DB. |
+| 2026-09-28 | Chat fan-out via Redis pub/sub, one subscription per active room per process; WS auth in the first frame | In-process registry; `?token=` in the WS URL | Observed cross-process 0/10 with the registry; uvicorn logs the full WS path, so a query token would be written to logs |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

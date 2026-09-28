@@ -27,7 +27,7 @@ Keep it as bullets, not essays.
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
-- **M4 — Real-time chat / bidirectional comms** (empty)
+- **M4 — Real-time chat / bidirectional comms** (1 entry: in-process WS registry → Redis pub/sub)
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
 - **M7 — Voice/video calling** (empty)
@@ -367,6 +367,24 @@ Keep it as bullets, not essays.
 > Turn on task events (workers and publishers), watch them live in Flower behind auth, and alert on queue depth and task failure rate from the broker and logs. Flower's state is in memory, so it's a live view, not history. Queue depth growing means consumers can't keep up: scale workers or find the slow task.
 
 **Trap answer to avoid:** *"Celery guarantees exactly-once"* or *"I'll just set `max_retries=0` to avoid duplicates"*: turning off retries doesn't stop redelivery after a worker crash, it only adds lost jobs.
+
+---
+
+## M4 — Real-time chat / bidirectional communication
+
+### `2026-09-28 · M4` — WebSocket chat: in-process room registry → Redis pub/sub across processes
+
+- **What we did:** `WS /api/v1/ws/appointments/{id}/chat` (`app/api/routes/chat.py`): participants only; the **first frame** must be `{"type": "auth", "token": ...}` within 5s; then `{"type": "message", "text": ...}` frames are fanned out to the room. **Naive:** `ChatHub` = `dict[room, set[WebSocket]]` in process memory. **Fix:** `app/realtime/hub.py` publishes to Redis channel `chat:appointment:{id}`; each process holds one subscription per room that has local sockets and forwards to them; join waits for the subscribe confirmation. Observed with `scripts/observe_chat.py` (two API processes on :8001/:8002 like two workers behind a load balancer).
+- **Observed (naive):** same-process delivery **10/10**, cross-process **0/10**: the patient's socket on :8002 never saw the doctor's messages sent via :8001. The outsider was closed with **1008**.
+- **Observed (fixed):** same-process **10/10**, cross-process **10/10**, outsider 1008. uvicorn logs `"WebSocket /api/v1/ws/appointments/340/chat" [accepted]`, i.e. the **full path**, and **0 JWTs** appear in either log.
+- **Lesson 1 — sockets are pinned to a process:** a WebSocket lives in the process that accepted it. Behind N workers, an in-memory registry delivers only to peers who happened to land on the sender's process (~1/N). Fan-out needs a bus every process subscribes to.
+- **Lesson 2 — subscribe before you say "joined":** `SUBSCRIBE` is asynchronous; if join returns before Redis confirms, messages published in that gap are silently missed. The hub awaits the confirmation (`get_message` after `subscribe`).
+- **Lesson 3 — auth without leaking the token:** browsers can't set headers on a WebSocket, so people put `?token=` in the URL, and uvicorn's access log then writes every JWT to disk (we saw the full path logged). First-frame auth with a timeout keeps tokens out of URLs and logs.
+- **Lesson 4 — don't hold a DB session per socket:** a request-scoped `Depends(get_db_session)` on a WebSocket route lives as long as the socket, pinning a pool connection per open chat; 15 open chats would exhaust the default pool. The route uses a short-lived session only for the auth checks.
+- **What pub/sub does NOT give you (next loops):** no persistence (a process that isn't subscribed at that moment misses the message forever), no acks, no replay on reconnect. Chat history must live in Postgres; pub/sub is only the live fan-out.
+- **Found along the way:** Bruno CLI 4.2 can't execute `type: ws` requests (`Unsupported protocol ws:`), so the WS example is tagged `ws` and `verify.ps1 -Bruno` runs with `--exclude-tags=ws`; `observe_chat.py` is the headless check. The export example's fixed 1.5s sleep flaked when the API was cold (first publish reached the worker ~1s late); it now polls with a deadline and passed 3/3 from a cold start.
+- **Interview answer:** *"WebSocket connections are stateful and pinned to one server process, so with several workers an in-memory room registry only reaches the clients on the same process. I put a pub/sub bus between them: every process subscribes to the rooms it has local clients for and forwards messages to them. Redis pub/sub is fire-and-forget, so it's only the live path; history goes to the database so reconnecting clients can catch up."*
+- **Trap to avoid:** *"Use sticky sessions and the in-memory registry works"*: sticky sessions pin one *client*, but the doctor and patient are different clients who can land on different processes. Also avoid *"Redis pub/sub guarantees delivery"*: it has no persistence or acks.
 
 ---
 

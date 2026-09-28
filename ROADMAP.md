@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete (thread → Celery, idempotency, beat reminders, export jobs, Flower).** Next up: M4 — real-time chat (naive in-process WebSocket registry first).
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 started: WS chat fan-out via Redis pub/sub done.** Next up: M4 chat history in Postgres + reconnect catch-up.
 
 ---
 
@@ -93,10 +93,10 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 **Learning 3 (deep):** Bidirectional communication over WebSockets + pub/sub across workers.
 
-- [ ] **Naive:** in-process WebSocket registry in one uvicorn worker → messages "disappear" when connected to a different worker
-- [ ] **Observations:** two workers = two registries; the "echo" works only on one port/worker
-- [ ] Redis pub/sub as cross-process bus; message broadcast pattern
-- [ ] Auth + connection lifecycle over WebSockets; reconnect handling
+- [x] **Naive:** in-process WebSocket registry → cross-process delivery 0/10 (doctor on :8001, patient on :8002)
+- [x] **Observations:** two processes = two registries; same-process 10/10, cross-process 0/10
+- [x] Redis pub/sub as cross-process bus (subscribe confirmed before join) → cross-process 10/10 ✅
+- [ ] Auth + connection lifecycle over WebSockets; reconnect handling (done: first-frame auth, participant check → 1008, short-lived DB session; todo: reconnect + catch-up)
 - [ ] Chat history via Postgres (and caching read of recent history — unifies M2)
 - [ ] Error handling: disconnects mid-message, ordering, at-least-once vs duplicates
 - [ ] LEARNING.md log + interview section (WebSocket vs SSE vs long-polling, horizontal scaling of sockets, redis pub/sub guarantees — what it does NOT give you)
@@ -195,3 +195,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M3 | Reminders: naive long-ETA tasks (worker crashed on consumer_timeout, 0/3 sent; with 30 min timeout the cancelled appointment was reminded and the rescheduled one got the stale time) → `reminder_sent_at` migration + beat scan with SKIP LOCKED + scheduled_at-keyed idempotency (A/B/C all correct) + reschedule Bruno example | ✅ |
 | 2026-09-28 | M3 | Export jobs: naive AsyncResult status on the cache Redis (unknown id → 200 PENDING, other user read result, eviction → PENDING) → `export_jobs` table (migration `cdac0e353a2c`, enum downgrade fixed) + 202/Location + owner-only 404 + download; Bruno 20/20 | ✅ |
 | 2026-09-28 | M3 | Observability: Flower defaults saw 0/5 tasks, no queue depth, and with the API flag flipped UI+API were open → task events, `flowerconfig.py` (basic auth + broker_api from settings) → 5/5 tasks with runtimes, queue depth, 401 unauth. **M3 complete** | ✅ |
+| 2026-09-28 | M4 | WS chat: naive in-process registry (cross-process 0/10) → Redis pub/sub hub (10/10); first-frame auth (no JWT in logs), 1008 for outsiders; Bruno ws example (GUI-only, CLI excluded by tag); export Bruno example now polls (3/3 cold) | ✅ |
