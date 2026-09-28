@@ -78,7 +78,8 @@ try {
         if ($Bruno) {
             Step "Bruno collection (api/collection, env Development)" {
                 Push-Location (Join-Path $root "api/collection")
-                try { Invoke-Checked "npx" @("--yes", "@usebruno/cli", "run", "--env", "Development") } finally { Pop-Location }
+                # ws-tagged examples are GUI-only: Bruno CLI 4.2 can't run WebSocket requests.
+                try { Invoke-Checked "npx" @("--yes", "@usebruno/cli", "run", "--env", "Development", "--exclude-tags=ws") } finally { Pop-Location }
             }
         }
 

@@ -11,8 +11,16 @@ get {
 }
 
 script:pre-request {
-  // Give the worker a moment; the job is usually done in ~200ms.
-  await bru.sleep(1500);
+  // Poll with a deadline instead of a fixed sleep: the first publish from a cold API
+  // took ~1s to reach the worker, and a fixed 1.5s wait flaked.
+  const url = `${bru.getEnvVar('baseUrl')}/api/v1/exports/${bru.getVar('export_job_id')}`;
+  const headers = { Authorization: `Bearer ${bru.getVar('access_token')}` };
+  for (let i = 0; i < 40; i++) {
+    const r = await bru.sendRequest({ method: 'GET', url, headers });
+    const s = r.data && r.data.data ? r.data.data.status : null;
+    if (s !== 'queued' && s !== 'running') break;
+    await bru.sleep(250);
+  }
 }
 
 assert {
