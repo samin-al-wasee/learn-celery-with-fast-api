@@ -40,5 +40,5 @@ script:post-response {
 }
 
 docs {
-  Publishes an appointment.booked event to the cardicheck.events topic exchange (M5, confirmed + persistent).
+  Publishes an appointment.booked event to the cardicheck.events topic exchange: written to outbox_events in the booking's transaction and published by python -m app.events.relay (M6).
 }
