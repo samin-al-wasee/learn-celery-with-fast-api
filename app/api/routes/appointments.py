@@ -1,4 +1,3 @@
-import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -8,12 +7,11 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
-from app.events.publisher import publish
+from app.events.outbox import stage
 from app.models import Appointment, AppointmentStatus, User, UserRole
 from app.schemas.appointments import (
     AppointmentCreate,
@@ -24,14 +22,13 @@ from app.schemas.appointments import (
 from app.schemas.envelope import ApiResponse
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
-logger = logging.getLogger("uvicorn.error")
 
 
 def _brief(user: User) -> UserBrief:
     return UserBrief(id=user.id, full_name=user.full_name, role=user.role.value)
 
 
-async def _emit(kind: str, appt: Appointment) -> None:
+def _stage_event(db: AsyncSession, kind: str, appt: Appointment) -> None:
     event: dict[str, Any] = {
         "event_id": str(uuid.uuid4()),
         "type": kind,
@@ -41,11 +38,9 @@ async def _emit(kind: str, appt: Appointment) -> None:
         "scheduled_at": appt.scheduled_at.isoformat(),
         "occurred_at": datetime.now(timezone.utc).isoformat(),
     }
-    # M5: published after commit, so a broker failure can still lose the event (outbox: M6).
-    try:
-        await run_in_threadpool(publish, kind, event)
-    except Exception:
-        logger.exception("event not published type=%s appointment_id=%s", kind, appt.id)
+    # M6: the event is written in the same transaction as the state change (transactional
+    # outbox); app.events.relay publishes it, so a down broker delays events instead of losing them.
+    stage(db, kind, event)
 
 
 def _response(appt: Appointment) -> AppointmentResponse:
@@ -106,9 +101,10 @@ async def create_appointment(
         reason=payload.reason,
     )
     db.add(appt)
+    await db.flush()
+    _stage_event(db, "appointment.booked", appt)
     await db.commit()
     await db.refresh(appt)
-    await _emit("appointment.booked", appt)
     return ApiResponse(data=_response(appt))
 
 
@@ -204,9 +200,9 @@ async def cancel_appointment(
         )
 
     appt.status = AppointmentStatus.CANCELLED
+    _stage_event(db, "appointment.cancelled", appt)
     await db.commit()
     await db.refresh(appt)
-    await _emit("appointment.cancelled", appt)
     return ApiResponse(data=_response(appt))
 
 

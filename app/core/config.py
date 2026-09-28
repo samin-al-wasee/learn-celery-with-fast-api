@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     flower_basic_auth: str | None = None
     rabbitmq_management_url: str = "http://cardicheck:cardicheck@localhost:15672/api/"
     rabbitmq_blocked_timeout_seconds: float = 2.0
+    # M6: how often the outbox relay polls when there is nothing (or it can't) publish.
+    outbox_relay_interval_seconds: float = 1.0
 
     # M3: appointment reminders go out this long before scheduled_at.
     reminder_lead_seconds: int = 86400
