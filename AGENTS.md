@@ -76,7 +76,7 @@ uvicorn app.main:app --reload              # API (from project root)
 celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows
 alembic upgrade head                       # apply migrations
 pytest                                     # run tests (once tests exist)
-.\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script>)
+.\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script> | -Bruno)
 ```
 
 Prefer PowerShell for this repo. Do not `cd` inside commands — use the `workdir` parameter.

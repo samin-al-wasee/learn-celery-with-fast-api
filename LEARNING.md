@@ -24,7 +24,7 @@ Keep it as bullets, not essays.
 ## Table of contents (per milestone)
 
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
-- **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
+- **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (2 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates) + interview file
 - **M4 — Real-time chat / bidirectional comms** (empty)
@@ -193,6 +193,18 @@ Keep it as bullets, not essays.
 - **Fix / best practice:** `ConfigDict(str_strip_whitespace=True)` + `min_length=1` so whitespace-only fails; role conditional via `model_validator(mode="after")`; lead time as handler check (`<= now + 15 min → 400`); error serialization sanitized centrally in `errors.py`.
 - **Interview answer:** *"Validation splits into two layers: static shape in Pydantic — formats, lengths, `Literal` value sets, role-conditional fields — which surfaces as 422 with zero handler code; and state/time rules in the handler — lead time, transitions, ownership — surfacing as 400/409. And I learned the hard way to sanitize Pydantic's `ctx` before rendering errors, because the error handler itself must never crash."*
 - **Trap to avoid:** trusting `min_length` to catch blank strings (whitespace passes) — combine with `str_strip_whitespace`; and echoing `exc.errors()` into the response envelope without making it JSON-safe.
+
+### `2026-09-28 · M1` — Bruno collection as a machine-checked contract (CLI run exposed 3 hidden bugs)
+
+- **What we did:** Ran the whole collection headless for the first time (`npx @usebruno/cli run --env Development`) and made it part of the gate: `scripts/verify.ps1 -Bruno`.
+- **Observed (before):** 15 requests, **6 failed with 422**, and 34/49 asserts passed. Three separate bugs had hidden behind "it passed in the GUI":
+  1. **31 `res.body: contains "..."` asserts** fail in Bruno CLI 4.2.0: `contains` on an object body is invalid there. They were weak anyway: a substring scan of the whole JSON passes on any field with that value and misses shape changes (the variable-capture trap from the freshness rule).
+  2. **4 malformed request bodies** (`confirm-appointment`, `create-record`, `patch-record`, `update-profile`) written as bare `key: value` lines inside `body:json` instead of a JSON object → invalid JSON → the API correctly returned 422.
+  3. **Wrong run order:** `cancel` (seq 3) ran before `confirm` (seq 4), and a cancelled appointment is terminal, so the flow could never pass top to bottom.
+- **Fix:** field-level asserts on the envelope (`res.body.error: isNull`, `res.body.data.status: eq "confirmed"`, `res.body.data.id: isNumber`, `res.body.meta.pagination: isDefined`, …); real JSON bodies; confirm → cancel order. **After: 15/15 requests, 49/49 asserts.**
+- **Lesson:** a contract nobody runs automatically isn't a contract. Clicking requests one at a time in a GUI hides ordering bugs and tolerates asserts a stricter runner rejects. Asserting on specific fields (`data.status`) pins the response shape; scanning for a substring only proves the word appears somewhere.
+- **Interview answer:** *"I keep API examples executable and run them headless in the same gate as the tests, as one ordered flow. Asserts check specific fields in the response envelope rather than substrings, so a renamed or moved field fails loudly instead of passing by accident."*
+- **Trap to avoid:** *"The collection passes in the GUI"*: a GUI run with leftover variables from earlier clicks isn't evidence the flow works from a clean start.
 
 ---
 

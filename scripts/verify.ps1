@@ -7,11 +7,13 @@
     .\scripts\verify.ps1 -Quick                   # compile + import only
     .\scripts\verify.ps1 -RequireDocs             # DOCUMENT exit gate
     .\scripts\verify.ps1 -Observe observe_stampede.py
+    .\scripts\verify.ps1 -Bruno                   # whole Bruno collection (API must be up)
 #>
 [CmdletBinding()]
 param(
     [switch]$Quick,
     [switch]$RequireDocs,
+    [switch]$Bruno,
     [string]$Observe,
     [string]$Base = "main",
     [int]$MaxFiles = 9
@@ -71,6 +73,13 @@ try {
 
         if ($Observe) {
             Step "observe: $Observe" { Invoke-Checked $python @((Join-Path "scripts" $Observe)) }
+        }
+
+        if ($Bruno) {
+            Step "Bruno collection (api/collection, env Development)" {
+                Push-Location (Join-Path $root "api/collection")
+                try { Invoke-Checked "npx" @("--yes", "@usebruno/cli", "run", "--env", "Development") } finally { Pop-Location }
+            }
         }
 
         if ($RequireDocs) {

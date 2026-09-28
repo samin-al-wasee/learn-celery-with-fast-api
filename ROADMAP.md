@@ -78,7 +78,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Observations:** API killed mid-send → 0/10 delivered; 50% SMTP failure → 3/10, no retries, only stderr tracebacks
 - [x] Celery app + worker + RabbitMQ broker: `acks_late` + retries → worker killed mid-send 10/10, flaky 10/10 ✅ (result backend deferred: separate Redis, see ARCHITECTURE)
 - [x] Idempotency: worker killed after send, before ack → 9 duplicate emails → provider-side idempotency key `welcome-{user_id}` → 0 duplicates (9 dedup hits) ✅
-- [ ] Chore: Bruno `res.body: contains` asserts fail in Bruno CLI 4.2.0 → rewrite as `res.body.data.<field>` asserts
+- [x] Chore: Bruno collection runs headless — field-level asserts, 4 malformed JSON bodies fixed, confirm→cancel order; 15/15 requests, 49/49 asserts; `verify.ps1 -Bruno` ✅
 - [ ] Async no-blocking flows: notifications, PDF/export generation, reminders
 - [ ] Task modeling: signatures, `apply_async`, ETA/countdown, retries + backoff, idempotency
 - [ ] `beat` = scheduled jobs (e.g. daily reminder)
@@ -189,3 +189,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M2 | Memory limits + fail-open: full Redis (`noeviction`) and Redis down → `GET /users/me` 500 → fail-open cache helpers (0.5s timeouts) + `maxmemory 128mb allkeys-lru` → 200 in all three cases | ✅ |
 | 2026-09-28 | M3 | Welcome email: naive thread-per-request (crash 0/10, flaky 3/10) → Celery task on RabbitMQ with acks_late + retries (crash 10/10, flaky 10/10, 0 dupes); found kombu localhost→127.0.0.1 + silent publish-after-commit loss, competing consumers, thread-unsafe outbox | ✅ |
 | 2026-09-28 | M3 | Idempotency: worker killed between provider accept and ack → 9/10 duplicate emails → provider-enforced key `welcome-{user_id}` (exclusive create) → 0 duplicates, 9 dedup hits | ✅ |
+| 2026-09-28 | M1 | Bruno collection as contract: CLI run exposed substring asserts invalid in CLI 4.2.0, 4 malformed JSON bodies (422), cancel-before-confirm order → field asserts, fixed bodies/order (15/15, 49/49) + `verify.ps1 -Bruno` | ✅ |

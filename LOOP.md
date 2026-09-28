@@ -55,7 +55,7 @@ So one learning topic = **two passes** through IMPLEMENT → TEST (naive, then f
 
 ### 4. VERIFY
 - **Enter:** tests ran.
-- **Do:** run `scripts/verify.ps1` (the full gate) and re-read the diff against the plan's **Done when**.
+- **Do:** run `scripts/verify.ps1` (the full gate; add `-Bruno` whenever an endpoint or `.bru` changed) and re-read the diff against the plan's **Done when**.
 - **Exit gate:** `verify.ps1` exits 0, **and** every **Done when** item is met, **and** no edits are left over that the plan didn't mention.
 
 ### 5. DOCUMENT
@@ -107,4 +107,4 @@ Proposed: branch <type>/<desc> · commits: [<type>] <title> …
 
 - **Claude Code:** `/loop-engineer <task>` (skill in `.claude/skills/loop-engineer/`). No task given → it takes the next roadmap item.
 - **Any other agent:** point it at this file: *"Follow LOOP.md for: <task>."* `AGENTS.md` already links here, so agents that load `AGENTS.md` automatically (Codex, Cursor, Copilot) get it too.
-- **Verify gate by hand:** `.\scripts\verify.ps1` · `-Quick` (imports only) · `-RequireDocs` · `-Observe observe_stampede.py`.
+- **Verify gate by hand:** `.\scripts\verify.ps1` · `-Quick` (imports only) · `-RequireDocs` · `-Observe observe_stampede.py` · `-Bruno`.
