@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     reminder_lead_seconds: int = 86400
     reminder_scan_seconds: float = 60.0
 
+    # M3: where finished record exports (CSV) are written.
+    export_dir: str = ".outbox/exports"
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
