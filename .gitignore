@@ -31,3 +31,6 @@ env/
 
 # Logs
 *.log
+# Celery beat local schedule state (M3)
+celerybeat-schedule*
+

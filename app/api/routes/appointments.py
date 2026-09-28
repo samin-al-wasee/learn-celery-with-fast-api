@@ -241,6 +241,8 @@ async def update_appointment(
                 message="scheduled_at must be at least 15 minutes from now",
             )
         appt.scheduled_at = updates["scheduled_at"]
+        # M3: a new time owes a new reminder; the beat scan picks it up from the DB.
+        appt.reminder_sent_at = None
     if "reason" in updates:
         appt.reason = updates["reason"]
 

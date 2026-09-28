@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # M3: Celery broker (RabbitMQ).
     celery_broker_url: str = "amqp://cardicheck:cardicheck@localhost:5672//"
 
+    # M3: appointment reminders go out this long before scheduled_at.
+    reminder_lead_seconds: int = 86400
+    reminder_scan_seconds: float = 60.0
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0

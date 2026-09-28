@@ -16,4 +16,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # M3: fire-and-forget jobs; no result backend until a loop needs task state.
     task_ignore_result=True,
+    beat_schedule={
+        "send-due-reminders": {
+            "task": "app.worker.tasks.send_due_reminders",
+            "schedule": settings.reminder_scan_seconds,
+            # M3: if workers are down, beat keeps publishing; expire stale scans instead of replaying a backlog.
+            "options": {"expires": settings.reminder_scan_seconds},
+        },
+    },
 )
