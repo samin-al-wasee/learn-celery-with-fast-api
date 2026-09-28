@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     availability_breaker_threshold: int = 3
     availability_breaker_reset_seconds: float = 10.0
 
+    # M6: billing provider (deposit saga).
+    billing_url: str = "http://127.0.0.1:8200"
+    billing_timeout_seconds: float = 2.0
+    deposit_cents: int = 2000
+    # M6: re-drive deposit sagas stuck in processing (lost/discarded task) after this long.
+    deposit_resume_after_seconds: float = 30.0
+    deposit_sweep_seconds: float = 30.0
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0

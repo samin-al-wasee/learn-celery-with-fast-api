@@ -1,11 +1,11 @@
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,8 +15,9 @@ from app.core.breaker import CircuitBreaker
 from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
-from app.events.outbox import stage
-from app.models import Appointment, AppointmentStatus, User, UserRole
+from app.events.outbox import stage_appointment_event
+from app.models import Appointment, AppointmentStatus, Payment, User, UserRole
+from app.models.payment import PAYMENT_PROCESSING
 from app.schemas.appointments import (
     AppointmentCreate,
     AppointmentResponse,
@@ -24,6 +25,7 @@ from app.schemas.appointments import (
     UserBrief,
 )
 from app.schemas.envelope import ApiResponse
+from app.worker.saga import collect_deposit
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 logger = logging.getLogger("uvicorn.error")
@@ -63,21 +65,6 @@ async def _check_availability(doctor_id: int, at: datetime) -> tuple[bool, list[
 
 def _brief(user: User) -> UserBrief:
     return UserBrief(id=user.id, full_name=user.full_name, role=user.role.value)
-
-
-def _stage_event(db: AsyncSession, kind: str, appt: Appointment) -> None:
-    event: dict[str, Any] = {
-        "event_id": str(uuid.uuid4()),
-        "type": kind,
-        "appointment_id": appt.id,
-        "patient_id": appt.patient_id,
-        "doctor_id": appt.doctor_id,
-        "scheduled_at": appt.scheduled_at.isoformat(),
-        "occurred_at": datetime.now(timezone.utc).isoformat(),
-    }
-    # M6: the event is written in the same transaction as the state change (transactional
-    # outbox); app.events.relay publishes it, so a down broker delays events instead of losing them.
-    stage(db, kind, event)
 
 
 def _response(appt: Appointment) -> AppointmentResponse:
@@ -150,7 +137,7 @@ async def create_appointment(
     )
     db.add(appt)
     await db.flush()
-    _stage_event(db, "appointment.booked", appt)
+    stage_appointment_event(db, "appointment.booked", appt)
     await db.commit()
     await db.refresh(appt)
     return ApiResponse(data=_response(appt), meta={"warnings": warnings} if warnings else {})
@@ -248,7 +235,7 @@ async def cancel_appointment(
         )
 
     appt.status = AppointmentStatus.CANCELLED
-    _stage_event(db, "appointment.cancelled", appt)
+    stage_appointment_event(db, "appointment.cancelled", appt)
     await db.commit()
     await db.refresh(appt)
     return ApiResponse(data=_response(appt))
@@ -319,3 +306,63 @@ async def update_appointment(
         await db.commit()
         await db.refresh(appt)
     return ApiResponse(data=_response(appt))
+
+
+def _deposit_view(payment: Payment) -> dict[str, Any]:
+    return {
+        "payment_id": payment.id,
+        "status": payment.status,
+        "amount_cents": payment.amount_cents,
+        "charge_id": payment.charge_id,
+        "error": payment.error,
+    }
+
+
+async def _patient_appointment(db: AsyncSession, appointment_id: int, user: User) -> Appointment:
+    appt = await _get_appointment(db, appointment_id)
+    if user.id != appt.patient_id:
+        raise CardicheckError(
+            status_code=status.HTTP_403_FORBIDDEN, code="FORBIDDEN", message="only the patient pays the deposit"
+        )
+    return appt
+
+
+@router.post("/{appointment_id}/deposit", response_model=ApiResponse[dict[str, Any]], status_code=status.HTTP_202_ACCEPTED)
+async def pay_deposit(
+    appointment_id: int,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[dict[str, Any]]:
+    appt = await _patient_appointment(db, appointment_id, current_user)
+    payment = (await db.execute(select(Payment).where(Payment.appointment_id == appt.id))).scalar_one_or_none()
+    if payment is None:
+        # M6: saga state first (durable), then the work runs in a retrying Celery task.
+        payment = Payment(
+            appointment_id=appt.id,
+            idempotency_key=f"deposit-{appt.id}",
+            amount_cents=get_settings().deposit_cents,
+        )
+        db.add(payment)
+        await db.commit()
+        await db.refresh(payment)
+    if payment.status == PAYMENT_PROCESSING:
+        # M6: re-POSTing while processing re-enqueues; the task is idempotent, so a lost
+        # enqueue (broker hiccup after commit) heals on the client's retry.
+        await run_in_threadpool(collect_deposit.delay, payment.id)
+    else:
+        response.status_code = status.HTTP_200_OK
+    return ApiResponse(data=_deposit_view(payment))
+
+
+@router.get("/{appointment_id}/deposit", response_model=ApiResponse[dict[str, Any]])
+async def get_deposit(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[dict[str, Any]]:
+    appt = await _patient_appointment(db, appointment_id, current_user)
+    payment = (await db.execute(select(Payment).where(Payment.appointment_id == appt.id))).scalar_one_or_none()
+    if payment is None:
+        raise CardicheckError(status_code=status.HTTP_404_NOT_FOUND, code="DEPOSIT_NOT_FOUND", message="no deposit yet")
+    return ApiResponse(data=_deposit_view(payment))

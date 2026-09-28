@@ -4,7 +4,7 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-celery_app = Celery("cardicheck", broker=settings.celery_broker_url, include=["app.worker.tasks"])
+celery_app = Celery("cardicheck", broker=settings.celery_broker_url, include=["app.worker.tasks", "app.worker.saga"])
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -26,6 +26,11 @@ celery_app.conf.update(
             "schedule": settings.reminder_scan_seconds,
             # M3: if workers are down, beat keeps publishing; expire stale scans instead of replaying a backlog.
             "options": {"expires": settings.reminder_scan_seconds},
+        },
+        "resume-stale-deposits": {
+            "task": "app.worker.saga.resume_stale_deposits",
+            "schedule": settings.deposit_sweep_seconds,
+            "options": {"expires": settings.deposit_sweep_seconds},
         },
     },
 )
