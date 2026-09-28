@@ -5,12 +5,15 @@ Run:  python -m app.consumers.notifications
 import json
 import logging
 import time
-from pathlib import Path
 
 import pika  # type: ignore[import-untyped]
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.events.rabbit import EXCHANGE, connection_params
+from app.models import Notification, ProcessedEvent
+from app.worker.db import run_db
 
 logger = logging.getLogger("notifications")
 
@@ -45,20 +48,38 @@ def handle(body: bytes) -> bool:
         event = json.loads(body)
         event_id = str(event["event_id"])
         kind = str(event["type"])
+        patient_id = int(event["patient_id"]) if "patient_id" in event else None
     except (ValueError, KeyError, TypeError) as exc:
         raise PoisonMessage(type(exc).__name__) from exc
-    out = Path(settings.notify_outbox_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    marker = out / f"{event_id}.done"
-    if marker.exists():
-        return False
     time.sleep(settings.notify_process_seconds)
-    # M5: at-least-once delivery -> idempotent by event_id (exclusive create).
-    try:
-        with marker.open("x", encoding="utf-8") as f:
-            f.write(kind)
-    except FileExistsError:
+    return run_db(lambda db: _apply_once(db, event, event_id, kind, patient_id))
+
+
+async def _apply_once(db: AsyncSession, event: dict, event_id: str, kind: str, patient_id: int | None) -> bool:
+    # M5: inbox pattern. The "processed" record and the side effect commit in ONE transaction,
+    # visible to every consumer instance; a redelivery hits the primary key and does nothing.
+    claimed = (
+        await db.execute(
+            insert(ProcessedEvent)
+            .values(event_id=event_id, consumer=QUEUE)
+            .on_conflict_do_nothing(index_elements=[ProcessedEvent.event_id])
+            .returning(ProcessedEvent.event_id)
+        )
+    ).scalar_one_or_none()
+    if claimed is None:
+        await db.rollback()
         return False
+    if patient_id is not None:
+        db.add(
+            Notification(
+                user_id=patient_id,
+                kind=kind,
+                body=f"{kind.replace('.', ' ')} for {event.get('scheduled_at', 'your appointment')}",
+                appointment_id=event.get("appointment_id"),
+                event_id=event_id,
+            )
+        )
+    await db.commit()
     return True
 
 
@@ -84,6 +105,7 @@ def main() -> None:
             ch.basic_nack(method.delivery_tag, requeue=False)
             return
         # M5: ack only after the work is done; a crash before this line means redelivery.
+        time.sleep(get_settings().notify_ack_delay_seconds)
         ch.basic_ack(method.delivery_tag)
 
     ch.basic_consume(QUEUE, on_message, auto_ack=False)

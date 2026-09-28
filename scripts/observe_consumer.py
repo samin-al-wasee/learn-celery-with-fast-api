@@ -17,7 +17,12 @@ from pathlib import Path
 
 import pika  # type: ignore[import-untyped]
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.consumers import notifications as consumer
+from app.models import ProcessedEvent
+from app.worker.db import run_db
 
 N = 100
 POISON_AT = 50
@@ -41,10 +46,7 @@ def start(env: dict[str, str], n: int) -> subprocess.Popen:
 
 
 def main() -> None:
-    out = Path(".outbox/notifications-observe")
-    for f in out.glob("*.done"):
-        f.unlink()
-    env = {**os.environ, "PYTHONPATH": str(Path.cwd()), "NOTIFY_OUTBOX_DIR": str(out)}
+    env = {**os.environ, "PYTHONPATH": str(Path.cwd())}
 
     conn = pika.BlockingConnection(consumer.connection_params())
     ch = conn.channel()
@@ -87,11 +89,13 @@ def main() -> None:
         time.sleep(0.5)
     proc.kill()
 
-    # event ids are uuid4 (5 dash-separated groups); naive markers append a random suffix.
-    seen = ["-".join(f.stem.split("-")[:5]) for f in out.glob("*.done")]
-    unique = set(seen) & set(good)
-    print(f"processed {len(unique)}/{len(good)} good events, lost={len(good) - len(unique)}, "
-          f"duplicates={len(seen) - len(set(seen))}")
+    # The consumer records every applied event in the processed_events inbox (one row per id).
+    async def applied(db: AsyncSession) -> set[str]:
+        rows = await db.execute(select(ProcessedEvent.event_id).where(ProcessedEvent.event_id.in_(good)))
+        return set(rows.scalars().all())
+
+    unique = run_db(applied)
+    print(f"processed {len(unique)}/{len(good)} good events, lost={len(good) - len(unique)}")
     crashed = sum("Traceback" in Path(f".outbox/consumer-{n}.err").read_text(errors="replace") for n in range(1, starts + 1))
     dedup = sum(Path(f".outbox/consumer-{n}.err").read_text(errors="replace").count("duplicate suppressed") for n in range(1, starts + 1))
     print(f"consumer crashes: {crashed}; duplicates suppressed: {dedup}; dead-lettered: {rabbit_depth(DLQ)[0]}; "

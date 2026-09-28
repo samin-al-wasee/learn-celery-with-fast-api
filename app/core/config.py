@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # M5: notifications consumer (pika, reads appointment events from RabbitMQ).
     notify_process_seconds: float = 0.05
     notify_outbox_dir: str = ".outbox/notifications"
+    notify_ack_delay_seconds: float = 0.0
 
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
