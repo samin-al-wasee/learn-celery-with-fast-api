@@ -1,0 +1,20 @@
+meta {
+  name: Get Deposit (doctor -> 403)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}/deposit
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 403
+  res.body.error.code: eq "FORBIDDEN"
+}
+
+docs {
+  Deposit status for the patient: processing | paid | declined (404 DEPOSIT_NOT_FOUND before the first POST).
+}

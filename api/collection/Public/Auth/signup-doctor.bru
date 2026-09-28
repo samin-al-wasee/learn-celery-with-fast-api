@@ -12,7 +12,7 @@ post {
 
 body:json {
   {
-    "email": "dr.{{$randomFirstName}}.cardio@cardicheck.io",
+    "email": "dr.{{$randomFirstName}}.{{$guid}}@cardicheck.io",
     "password": "supersecret1",
     "full_name": "Dr. {{$randomFirstName}} {{$randomLastName}}",
     "role": "doctor",

@@ -1,0 +1,33 @@
+meta {
+  name: Create Charge (idempotent)
+  type: http
+  seq: 1
+  tags: [
+    internal
+  ]
+}
+
+post {
+  url: {{billingUrl}}/charges
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "amount_cents": 2000,
+    "reference": "bruno-{{$guid}}",
+    "idempotency_key": "bruno-fixed-key"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: isString
+  res.body.status: eq "succeeded"
+}
+
+docs {
+  Fake billing provider (M6), run with: uvicorn services.billing.main:app --port 8200.
+  Re-sending the same idempotency_key returns the original charge (same id) instead of charging again.
+}

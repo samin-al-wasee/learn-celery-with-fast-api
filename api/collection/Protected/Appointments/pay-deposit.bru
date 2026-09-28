@@ -1,0 +1,25 @@
+meta {
+  name: Pay Deposit (doctor -> 403)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/appointments/{{appt_id}}/deposit
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 403
+  res.body.error.code: eq "FORBIDDEN"
+}
+
+docs {
+  Deposit saga (M6). Only the appointment's patient may pay; this collection runs as the doctor,
+  so it pins the 403. As the patient: 202 {payment_id, status: "processing"}; a Celery task
+  charges billing with idempotency key deposit-{appointment_id} (timeouts retried safely);
+  a decline compensates by cancelling the appointment (appointment.cancelled via the outbox).
+  Re-POSTing while processing re-enqueues; a beat sweep re-drives stuck sagas.
+  Happy path headless: python scripts/observe_saga.py
+}
