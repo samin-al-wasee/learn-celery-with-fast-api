@@ -1,0 +1,24 @@
+meta {
+  name: List Notifications
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/notifications?limit=50
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.error: isNull
+  res.body.data: isArray
+  res.body.meta: isDefined
+}
+
+docs {
+  The caller's in-app notifications, newest first, keyset-paged via meta.next_before_id (M5).
+  Rows are written by the notifications consumer (python -m app.consumers.notifications)
+  from appointment.* events, exactly once per event (processed_events inbox).
+}
