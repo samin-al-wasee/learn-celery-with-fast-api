@@ -1,0 +1,29 @@
+meta {
+  name: Request Export
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/records/export
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 202
+  res.body.error: isNull
+  res.body.data.id: isString
+  res.body.data.status: eq "queued"
+  res.headers.location: isString
+}
+
+script:post-response {
+  if (res.status !== 202) return;
+  bru.setVar('export_job_id', res.getBody().data.id);
+}
+
+docs {
+  Starts an async CSV export of the caller's medical records (M3). Returns 202 + Location;
+  poll Get Export until status is succeeded. Needs a Celery worker running.
+}

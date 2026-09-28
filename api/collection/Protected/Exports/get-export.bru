@@ -1,0 +1,25 @@
+meta {
+  name: Get Export
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/exports/{{export_job_id}}
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  // Give the worker a moment; the job is usually done in ~200ms.
+  await bru.sleep(1500);
+}
+
+assert {
+  res.status: eq 200
+  res.body.error: isNull
+  res.body.data.id: eq {{export_job_id}}
+  res.body.data.status: eq "succeeded"
+  res.body.data.row_count: isNumber
+  res.body.data.download_url: isString
+}

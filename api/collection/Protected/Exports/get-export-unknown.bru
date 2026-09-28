@@ -1,0 +1,20 @@
+meta {
+  name: Get Export (unknown id)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/exports/{{$guid}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 404
+  res.body.error.code: eq "EXPORT_NOT_FOUND"
+}
+
+docs {
+  Unknown and other users' job ids are both 404, so job ids can't be probed for existence.
+}

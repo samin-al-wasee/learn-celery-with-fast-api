@@ -1,0 +1,16 @@
+meta {
+  name: Download Export
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/exports/{{export_job_id}}/download
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.headers['content-type']: contains "text/csv"
+}

@@ -9,6 +9,8 @@ Test every endpoint of the Cardicheck API from Bruno.
 3. Add an environment variable **baseUrl** = `http://localhost:8000`
    (**Collection → Environments**), or override per-run.
 4. Make sure the API is running: `docker compose up -d`, then `uvicorn app.main:app --reload`.
+   `Protected/Exports/*` also needs a Celery worker: `celery -A app.worker.celery_app worker -P threads`.
+   Headless run of the whole flow: `..\..\scripts\verify.ps1 -Bruno` (or `npx @usebruno/cli run --env Development`).
 5. Run any request. Each request carries its own asserts (status + body checks).
 
 ## Conventions
