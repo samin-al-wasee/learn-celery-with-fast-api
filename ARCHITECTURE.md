@@ -149,6 +149,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Chat fan-out via Redis pub/sub, one subscription per active room per process; WS auth in the first frame | In-process registry; `?token=` in the WS URL | Observed cross-process 0/10 with the registry; uvicorn logs the full WS path, so a query token would be written to logs |
 | 2026-09-28 | Chat = Postgres log (store, then publish) + pub/sub for live delivery + replay on reconnect | Pub/sub as the only path | Observed 0/5 catch-up and 2× retried sends with pub/sub alone; the log gives durability, ordering (DB id) and idempotency |
 | 2026-09-28 | Hand-written consumers ack after work, `prefetch_count=10`, poison → reject(requeue=False) → DLX `cardicheck.dlx` → `*.dlq`; handlers idempotent on `event_id` | auto_ack, unbounded prefetch, requeue on failure | Observed 86/99 lost on a crash and a poison-message crash losing 49; requeueing poison would hot-loop |
+| 2026-09-28 | API publishes domain events (`appointment.booked`/`cancelled`) to topic exchange `cardicheck.events` with confirms, `mandatory`, persistent messages, one long-lived channel per process | Connection per publish, fire-and-forget | Observed silent drops on a routing-key typo and 0/20 messages after a broker restart; publishing after commit still has the M6 outbox gap |
 
 *(Every later milestone appends here with a BECAUSE.)*
 
