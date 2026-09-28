@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # M2: +-fraction of random TTL spread so keys filled together don't expire together.
     cache_ttl_jitter: float = 0.1
 
+    # M3: Celery broker (RabbitMQ).
+    celery_broker_url: str = "amqp://cardicheck:cardicheck@localhost:5672//"
+
+    # M3: fake SMTP used by the welcome-email job.
+    email_send_seconds: float = 2.0
+    email_fail_rate: float = 0.0
+    email_outbox_dir: str = ".outbox/emails"
+
     # DEV-ONLY fallback; never ship a real secret as a default.
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"

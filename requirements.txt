@@ -10,3 +10,4 @@ PyJWT>=2.9
 email-validator>=2.1
 httpx>=0.27
 redis>=5.0
+celery>=5.4,<6.0

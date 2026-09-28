@@ -26,5 +26,8 @@ env/
 *.swp
 .DS_Store
 
+# Fake SMTP outbox (M3)
+.outbox/
+
 # Logs
 *.log
