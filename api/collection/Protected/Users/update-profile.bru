@@ -11,12 +11,13 @@ patch {
 }
 
 body:json {
-  full_name: {{$randomFullName}}
-  phone: +15551234567
+  {
+    "full_name": "{{$randomFullName}}",
+    "phone": "+15551234567"
+  }
 }
 
 assert {
   res.status: eq 200
-  res.body: contains "phone"
-  res.body: contains "+15551234567"
+  res.body.data.phone: eq "+15551234567"
 }

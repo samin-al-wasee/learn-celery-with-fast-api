@@ -1,7 +1,7 @@
 meta {
   name: Cancel Appointment
   type: http
-  seq: 3
+  seq: 4
 }
 
 post {
@@ -12,6 +12,6 @@ post {
 
 assert {
   res.status: eq 200
-  res.body: contains "data"
-  res.body: contains "cancelled"
+  res.body.error: isNull
+  res.body.data.status: eq "cancelled"
 }

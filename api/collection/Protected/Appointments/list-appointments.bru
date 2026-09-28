@@ -12,7 +12,7 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: contains "data"
-  res.body: contains "pagination"
-  res.body: contains "scheduled_at"
+  res.body.data: isArray
+  res.body.meta.pagination: isDefined
+  res.body.data[0].scheduled_at: isString
 }

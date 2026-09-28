@@ -12,7 +12,7 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: contains "data"
-  res.body: contains "email"
-  res.body: contains "doctor"
+  res.body.error: isNull
+  res.body.data.email: isString
+  res.body.data.role: eq "doctor"
 }

@@ -11,15 +11,17 @@ post {
 }
 
 body:json {
-  patient_id: {{signup_patient_id}}
-  title: Initial Consult
-  notes: Patient reports steady chest pain.
+  {
+    "patient_id": {{signup_patient_id}},
+    "title": "Initial Consult",
+    "notes": "Patient reports steady chest pain."
+  }
 }
 
 assert {
   res.status: eq 201
-  res.body: contains "data"
-  res.body: contains "Initial Consult"
+  res.body.data.id: isNumber
+  res.body.data.title: eq "Initial Consult"
 }
 
 script:post-response {

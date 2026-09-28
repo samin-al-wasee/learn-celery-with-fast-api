@@ -11,11 +11,13 @@ patch {
 }
 
 body:json {
-  title: Updated Title
+  {
+    "title": "Updated Title"
+  }
 }
 
 assert {
   res.status: eq 200
-  res.body: contains "Updated Title"
-  res.body: contains "steady chest pain"
+  res.body.data.title: eq "Updated Title"
+  res.body.data.notes: contains "steady chest pain"
 }

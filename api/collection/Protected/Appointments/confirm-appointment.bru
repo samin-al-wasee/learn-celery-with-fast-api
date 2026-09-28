@@ -1,7 +1,7 @@
 meta {
   name: Confirm Appointment
   type: http
-  seq: 4
+  seq: 3
 }
 
 patch {
@@ -11,10 +11,13 @@ patch {
 }
 
 body:json {
-  status: confirmed
+  {
+    "status": "confirmed"
+  }
 }
 
 assert {
   res.status: eq 200
-  res.body: contains "confirmed"
+  res.body.error: isNull
+  res.body.data.status: eq "confirmed"
 }
