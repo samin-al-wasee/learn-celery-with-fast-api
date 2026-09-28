@@ -136,6 +136,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-01 | Postgres as source of truth even for chat history | Redis for history | Redis is memory-bound; history must be durable, cursor-paged; Redis cache on top (M2 merge) |
 | 2026-09-01 | WebRTC (P2P→SFU) for calls in M7 | Prebuilt SDK | P2P→SFU is the classic interview narrative; forces real-time reasoning |
 | 2026-09-02 | Redis as the shared cache (read-through) | In-process dict (M1/M2 naive) | A cache must be shared across workers and survive restarts to mean anything; otherwise it silently serves stale, per-process data. Sync `redis-py` calls are delegated to the threadpool (never the loop). |
+| 2026-09-28 | Cache Redis: `maxmemory 128mb` + `allkeys-lru`; cache helpers fail-open (Redis error = miss, logged) with 0.5s socket timeouts | Default unbounded memory + `noeviction`; errors propagate | A cache is an optimization: bounded memory and eviction keep writes succeeding, and fail-open means a full or down Redis degrades latency instead of returning 500. **Consequence for M3:** `allkeys-lru` can evict Celery results, so the result backend must not share this instance's eviction policy (separate instance/policy). |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

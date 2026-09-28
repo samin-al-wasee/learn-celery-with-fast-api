@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching (read-through + invalidation + single-flight/stampede + TTL jitter) done.** Next up: M2 memory limits / eviction / fail-open cache, then Celery (M3).
+> Phase **1 — M1 complete; M2 caching complete (read-through, invalidation, single-flight, TTL jitter, eviction + fail-open).** Next up: M3 — Celery & async jobs (naive thread-per-request first).
 
 ---
 
@@ -64,8 +64,9 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] Cache invalidation on write: `PATCH /users/me` deletes the key (delete-over-update), read-through re-fetches fresh on next read — verified key gone after PATCH
 - [x] Cache stampede / thundering herd: why it happens — observed 20 concurrent misses → 20 datastore calls; fixed with single-flight `read_through` → 1 call (process-local; cross-worker lock deferred to M5/M8) ✅
 - [x] TTL strategy: fixed TTL → synchronized expiry (200 keys, 1s window, 200 misses in busiest second) → ±10% jitter (13s window, busiest second 30) ✅
-- [ ] Serialization choices & memory limits (covered: JSON `model_dump(mode="json")`, `decode_responses=True`; next: `maxmemory` + eviction policy + fail-open cache; cross-worker lock deferred to M5/M8)
-- [x] LEARNING.md log + interview section (stampede, invalidation, Redis as cache vs store vs broker)
+- [x] Serialization choices & memory limits: JSON `model_dump(mode="json")` + `decode_responses=True`; full Redis (`noeviction`) / Redis down → 500 → fail-open helpers + `maxmemory 128mb` `allkeys-lru` → 200 ✅ (circuit breaker + cross-worker lock deferred to M5/M8)
+- [x] LEARNING.md log + interview section (stampede, invalidation, Redis as cache vs store vs broker, full/down cache)
+- **M2 scope complete.**
 
 ---
 
@@ -183,3 +184,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-02 | M2 | Caching (1st increment): naive in-process dict on `GET /users/me` → observed stale-after-write (served old name after PATCH) → Redis read-through (`profile:{id}`) + write-invalidation on PATCH; observe: miss ~26ms vs hit ~5ms | ✅ |
 | 2026-09-02 | M2 | Caching (2nd increment): cache stampede/thundering herd — observed 20 concurrent misses → 20 datastore calls (in-process, deterministic) → single-flight `read_through` (cache.py) → 1 call; process-local scope + cross-worker lock deferred | ✅ |
 | 2026-09-28 | M2 | TTL strategy: fixed TTL → synchronized expiry (200 keys in 1s) → ±10% jitter in `cache_set` (13s window, peak 200 → 30) | ✅ |
+| 2026-09-28 | M2 | Memory limits + fail-open: full Redis (`noeviction`) and Redis down → `GET /users/me` 500 → fail-open cache helpers (0.5s timeouts) + `maxmemory 128mb allkeys-lru` → 200 in all three cases | ✅ |

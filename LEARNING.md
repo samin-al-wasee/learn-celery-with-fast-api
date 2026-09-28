@@ -25,7 +25,7 @@ Keep it as bullets, not essays.
 
 - **M0 — Foundation** (scaffolding, bootstrap, loop-engineer)
 - **M1 — Auth & CRUD** (12 entries: alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
-- **M2 — Caching with Redis** (3 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry)
+- **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (empty)
 - **M4 — Real-time chat / bidirectional comms** (empty)
 - **M5 — RabbitMQ deep dive** (empty)
@@ -233,6 +233,18 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"If many keys are cached at the same moment with the same TTL, they all expire at the same moment and the database eats a synchronized miss spike, repeating every TTL. I add random jitter to each TTL so expiries spread out. Single-flight handles many readers of one key; jitter handles many keys expiring together; a lock handles the cross-worker case."*
 - **Trap to avoid:** *"Just make the TTL longer"*: that only delays the same spike and makes data staler. Also avoid claiming single-flight covers this: it's per-key.
 
+### `2026-09-28 · M2` — memory limits + eviction + fail-open: the cache must never take the API down
+
+- **What we did:** `scripts/observe_cache_memory.py` caps Redis at (usage + 1MB), fills it with 10KB junk keys until the limit, then calls `GET /users/me` as a new user (a guaranteed miss, so the read path must `SET`). Separately: `docker compose stop redis` and call the endpoint. **Fix:** (1) `cache_get` / `cache_set` / `cache_delete` in `app/core/redis.py` catch `redis.RedisError` → log key + error type → treat as a miss (fail-open); client gets `socket_connect_timeout` / `socket_timeout` = 0.5s. (2) `docker-compose.yml` runs Redis with `--maxmemory 128mb --maxmemory-policy allkeys-lru`.
+- **Observed (naive):** Redis full with the default `noeviction` → `SET` raises "command not allowed when used memory > 'maxmemory'" → **`GET /users/me` 500**. Redis stopped → `ConnectionError` → **500**. The optional cache was a hard dependency of the read path.
+- **Observed (fixed):** full + `noeviction` → **200** (log: `cache set failed key=profile:535: OutOfMemoryError`); full + `allkeys-lru` → Redis evicted 1 key to accept the write → **200**; Redis down → **200** from the DB (log: `TimeoutError`), signup+login+me took ~2.2s total. Regression: `observe_cache.py` miss ~30ms / hit ~5ms / invalidation intact; `observe_stampede.py` still 20 → 1.
+- **Lesson 1 — Redis defaults are for a data store, not a cache:** no `maxmemory` means it grows until the host OOM-kills it; with a cap, `noeviction` rejects writes. For a cache, the right policy is to evict (`allkeys-lru`, or `volatile-*` when non-TTL keys must survive).
+- **Lesson 2 — fail-open vs fail-closed is a per-dependency decision:** the DB is the source of truth, so its failure *should* fail the request. The cache is an optimization, so its failure should cost latency, not availability. A failed **invalidation** is the only real risk: the key stays stale for at most one TTL, so we log it at ERROR, not WARNING.
+- **Honest cost:** with Redis down, every request pays up to ~1s (0.5s read timeout + 0.5s write timeout). On Docker Desktop the TCP connect to the forwarded port succeeds and the *read* times out, so we saw `TimeoutError`, not `ConnectionError`. The real fix for repeated slow failures is a **circuit breaker** (stop calling Redis for N seconds after K failures), deferred to M8.
+- **Design consequence (M3):** `allkeys-lru` may evict *any* key, including Celery task results if the result backend shared this instance. Logged in `ARCHITECTURE.md`: the result backend gets its own instance/policy.
+- **Interview answer:** *"A cache must be bounded and optional. I cap Redis memory and set an eviction policy like allkeys-lru, because the default noeviction rejects writes once it's full. And I make cache calls fail-open with short timeouts: a Redis error is treated as a miss and logged, so an outage makes us slower, not down. The failure I watch is a failed invalidation, which bounds staleness to one TTL, and for sustained outages I add a circuit breaker."*
+- **Trap to avoid:** *"Redis is in-memory, it'll just drop old keys"*: it won't unless you configure an eviction policy. Also avoid wrapping the cache in a blanket `except Exception` that also swallows serialization bugs; catch `RedisError` only.
+
 ---
 
 ## M2 — Caching — INTERVIEW FILE
@@ -245,6 +257,9 @@ Keep it as bullets, not essays.
 
 **Q3: What is a cache stampede and how do you stop it?**
 > When a hot key expires, many concurrent readers all miss and each fires its own DB query — the cache turns one expected miss into N, spiking the DB exactly at the worst moment. Mitigations: single-flight (coalesce concurrent misses into one in-flight load), a lock/`SET NX` so only one refills, and TTL jitter so keys don't expire in lockstep (measured: 200 keys, busiest second 200 → 30 misses with ±10% jitter).
+
+**Q4: What happens when your cache is full or down?**
+> With Redis defaults, a full instance (`noeviction`) rejects writes and a down one throws, and if cache calls aren't guarded, both become 500s. I cap memory with an eviction policy (`allkeys-lru`) and make cache calls fail-open with short timeouts, so a cache failure is a miss plus a log line. The price is latency during an outage, which a circuit breaker limits.
 
 **Trap answer to avoid:** *"The cache is just `if in dict: return; else: fetch; put in dict`"* — that's a per-process stale lie that ignores sharing and invalidations; and *"I'll just set a short TTL, problem solved"* — short TTL only shrinks (doesn't remove) the stale/expiry window and can *increase* stampede frequency.
 
