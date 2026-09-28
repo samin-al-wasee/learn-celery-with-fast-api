@@ -19,6 +19,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    # M2: cache-only instance -> bounded memory + evict least-recently-used instead of rejecting writes.
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     volumes:
