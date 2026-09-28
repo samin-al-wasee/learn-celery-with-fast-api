@@ -27,7 +27,7 @@ Keep it as bullets, not essays.
 - **M1 — Auth & CRUD** (13 entries: bruno-cli-contract, alembic, sync-in-async, bruno, login+jwt+cpu-blocking, public/protected roots, envelope, appointments-n1-pagination, collection-freshness, cancel-state-machine, records-ownership-patch, patch-transitions-rolevalidation, validation-layers)
 - **M2 — Caching with Redis** (4 entries: in-process-dict vs read-through + invalidation; stampede/thundering herd → single-flight; TTL jitter vs synchronized expiry; memory limits + eviction + fail-open)
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
-- **M4 — Real-time chat / bidirectional comms** (1 entry: in-process WS registry → Redis pub/sub)
+- **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (empty)
 - **M6 — Microservices / distributed systems** (empty)
 - **M7 — Voice/video calling** (empty)
@@ -386,11 +386,36 @@ Keep it as bullets, not essays.
 - **Interview answer:** *"WebSocket connections are stateful and pinned to one server process, so with several workers an in-memory room registry only reaches the clients on the same process. I put a pub/sub bus between them: every process subscribes to the rooms it has local clients for and forwards messages to them. Redis pub/sub is fire-and-forget, so it's only the live path; history goes to the database so reconnecting clients can catch up."*
 - **Trap to avoid:** *"Use sticky sessions and the in-memory registry works"*: sticky sessions pin one *client*, but the doctor and patient are different clients who can land on different processes. Also avoid *"Redis pub/sub guarantees delivery"*: it has no persistence or acks.
 
+### `2026-09-28 · M4` — chat history: pub/sub only → Postgres log + replay on reconnect + client_msg_id dedup
+
+- **What we did:** Migration `620d4cee556c` adds `chat_messages` (bigint id, `appointment_id`, `sender_id`, `client_msg_id`, `text`, `created_at`; unique `(sender_id, client_msg_id)`; index `(appointment_id, id)`). The WS route (`app/api/routes/chat.py`) now **stores first, then publishes** the stored row (with its id); a duplicate `client_msg_id` from the same sender is `ON CONFLICT DO NOTHING` and gets an `ack` with the existing id instead of a second broadcast. The auth frame may carry `last_seen_id`: the server **subscribes first, then replays** `id > last_seen_id` from the DB. New `GET /appointments/{id}/messages` (participants only, keyset-paged by id, `meta.next_before_id`). Observed with `scripts/observe_chat_history.py` (two API processes).
+- **Observed (naive):** patient read 5/5, disconnected, doctor sent 5 more, patient reconnected → **0/5** caught up. Same `client_msg_id` sent twice → patient received it **2×**. Frames had **no ids**, so ordering and dedup were impossible on the client.
+- **Observed (fixed):** catch-up **5/5**; retried send delivered **1×**; 11 ids received, **strictly increasing**. Regression: cross-process fan-out 10/10, outsider 1008. Bruno: new `list-messages.bru`; collection 21/21 requests, 72/72 asserts.
+- **Lesson 1 — the log is the source of truth, the bus is a doorbell:** pub/sub only reaches whoever is subscribed at that instant. Writing to Postgres first gives every message a durable, monotonic id; the pub/sub frame just says "there's something new". Anyone who missed the doorbell reads the log.
+- **Lesson 2 — subscribe, then replay (and accept overlap):** replay-then-subscribe leaves a gap where a message is neither in the replay nor received live. Subscribe-then-replay has no gap but may deliver a message twice (live + replay), so clients dedup by id. A gap loses data; an overlap only needs dedup.
+- **Lesson 3 — retries need a client-generated id:** after a lost echo, a retry is indistinguishable from a new message unless the client names it. A unique `(sender_id, client_msg_id)` makes the write idempotent (same idea as the welcome-email key in M3, applied at the DB).
+- **Lesson 4 — keyset pagination for history:** `WHERE id < before_id ORDER BY id DESC LIMIT n` on the `(appointment_id, id)` index costs the same on page 1 and page 1,000; `OFFSET` scans every skipped row.
+- **Deferred (honest):** caching recent history in Redis. Every new message would have to invalidate it, and the keyset query is already an index range scan; revisit only if M8 load tests show it's hot.
+- **Interview answer:** *"For chat I store every message in the database first, which gives it a durable, ordered id, and only then publish it on Redis pub/sub for live delivery. Pub/sub is fire-and-forget, so reconnecting clients send the last id they saw and the server replays anything newer, subscribing before the replay so nothing falls in a gap and dedupping by id. Clients attach their own message id, and a unique constraint on sender plus that id makes retries idempotent."*
+- **Trap to avoid:** *"Redis pub/sub is enough for chat"*: it loses every message sent while a client is disconnected. Also avoid *"order by timestamp"*: clocks differ across processes (we saw ~4s between the host and the Docker VM); order by the DB-assigned id.
+
 ---
 
-## M4 — Real-time chat — INTERVIEW FILE (placeholder to be filled when we reach it)
+## M4 — Real-time chat — INTERVIEW FILE
 
-*(Filled during M4. When we get there, ensure we cover: WebSocket vs HTTP long-polling tradeoffs, connection scaling, redis pub/sub as a cross-worker bus, at-least-once delivery of chat events, and message ordering.)*
+**Q1: WebSocket vs SSE vs long-polling?**
+> WebSocket is one full-duplex connection: best when both sides send often (chat). SSE is server→client only over plain HTTP, with auto-reconnect and `Last-Event-ID` built in: great for feeds and notifications. Long-polling works everywhere but costs a request per message and adds latency. All three hold a connection per client, so capacity planning is about concurrent connections, not requests per second.
+
+**Q2: How do you scale WebSockets across many servers?**
+> Connections are pinned to the process that accepted them, so an in-memory room registry only reaches clients on the same process (we measured 0/10 across two processes). Put a bus between processes, like Redis pub/sub, a message broker or a managed service: each process subscribes to the rooms it has local clients for and forwards messages. Sticky sessions don't solve it, because the two chat participants are different clients.
+
+**Q3: What does Redis pub/sub guarantee, and what doesn't it?**
+> It delivers to whoever is subscribed right now, in publish order per channel. It does not persist, ack, or replay: a disconnected or slow subscriber just misses messages. So the database is the log (durable, ordered ids), pub/sub is the live notification, and reconnecting clients catch up from the log with their last seen id.
+
+**Q4: How do you handle duplicates and ordering in chat?**
+> Order by the DB-assigned id, not client or server timestamps. Clients send a client-generated message id; a unique constraint on (sender, client id) makes retries idempotent. Delivery is at-least-once (live + replay can overlap), so clients dedup by id.
+
+**Trap answer to avoid:** *"WebSockets plus Redis pub/sub is a reliable messaging system"*: pub/sub drops messages for anyone not connected; reliability comes from the stored log plus replay.
 
 ---
 

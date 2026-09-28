@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 started: WS chat fan-out via Redis pub/sub done.** Next up: M4 chat history in Postgres + reconnect catch-up.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete (WS fan-out via Redis pub/sub, Postgres log, reconnect replay, idempotent sends).** Next up: M5 — RabbitMQ deep dive.
 
 ---
 
@@ -96,10 +96,11 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Naive:** in-process WebSocket registry → cross-process delivery 0/10 (doctor on :8001, patient on :8002)
 - [x] **Observations:** two processes = two registries; same-process 10/10, cross-process 0/10
 - [x] Redis pub/sub as cross-process bus (subscribe confirmed before join) → cross-process 10/10 ✅
-- [ ] Auth + connection lifecycle over WebSockets; reconnect handling (done: first-frame auth, participant check → 1008, short-lived DB session; todo: reconnect + catch-up)
-- [ ] Chat history via Postgres (and caching read of recent history — unifies M2)
-- [ ] Error handling: disconnects mid-message, ordering, at-least-once vs duplicates
-- [ ] LEARNING.md log + interview section (WebSocket vs SSE vs long-polling, horizontal scaling of sockets, redis pub/sub guarantees — what it does NOT give you)
+- [x] Auth + connection lifecycle over WebSockets; reconnect handling: first-frame auth, participant check → 1008, short-lived DB session, reconnect replay via `last_seen_id` (0/5 → 5/5) ✅
+- [x] Chat history via Postgres (`chat_messages`, keyset-paged `GET /appointments/{id}/messages`) ✅ — 🚧 caching recent history deferred until M8 load tests show it's hot
+- [x] Error handling: retried send 2× → 1× (unique sender+client_msg_id), ordering by DB id (strictly increasing), subscribe-then-replay overlap deduped by id ✅
+- [x] LEARNING.md log + interview section (WebSocket vs SSE vs long-polling, horizontal scaling of sockets, redis pub/sub guarantees — what it does NOT give you) ✅
+- **M4 scope complete** (history caching deferred).
 
 ---
 
@@ -196,3 +197,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M3 | Export jobs: naive AsyncResult status on the cache Redis (unknown id → 200 PENDING, other user read result, eviction → PENDING) → `export_jobs` table (migration `cdac0e353a2c`, enum downgrade fixed) + 202/Location + owner-only 404 + download; Bruno 20/20 | ✅ |
 | 2026-09-28 | M3 | Observability: Flower defaults saw 0/5 tasks, no queue depth, and with the API flag flipped UI+API were open → task events, `flowerconfig.py` (basic auth + broker_api from settings) → 5/5 tasks with runtimes, queue depth, 401 unauth. **M3 complete** | ✅ |
 | 2026-09-28 | M4 | WS chat: naive in-process registry (cross-process 0/10) → Redis pub/sub hub (10/10); first-frame auth (no JWT in logs), 1008 for outsiders; Bruno ws example (GUI-only, CLI excluded by tag); export Bruno example now polls (3/3 cold) | ✅ |
+| 2026-09-28 | M4 | Chat history: pub/sub only (reconnect catch-up 0/5, retried send 2×, no ids) → `chat_messages` log (migration `620d4cee556c`) + subscribe-then-replay `last_seen_id` (5/5) + unique sender+client_msg_id (1×) + keyset history endpoint; Bruno 21/21. **M4 complete** | ✅ |
