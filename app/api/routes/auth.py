@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +11,10 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models import User
 from app.schemas.auth import LoginRequest, SignupRequest, SignupResponse, TokenResponse
 from app.schemas.envelope import ApiResponse
+from app.worker.tasks import send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger("uvicorn.error")
 
 
 @router.post("/signup", response_model=ApiResponse[SignupResponse], status_code=status.HTTP_201_CREATED)
@@ -37,6 +41,12 @@ async def signup(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    # M3: publish to RabbitMQ; .delay() is blocking network I/O, so it runs off the loop.
+    # Publish after commit can still be lost if the broker is down (fix: transactional outbox, M6).
+    try:
+        await run_in_threadpool(send_welcome_email.delay, user.id)
+    except Exception:
+        logger.exception("welcome email not enqueued user_id=%s", user.id)
     return ApiResponse(
         data=SignupResponse(id=user.id, email=user.email, full_name=user.full_name, role=user.role)
     )
