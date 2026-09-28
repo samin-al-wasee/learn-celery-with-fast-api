@@ -38,3 +38,7 @@ script:post-response {
   const data = res.getBody().data;
   bru.setVar('appt_id', data.id);
 }
+
+docs {
+  Publishes an appointment.booked event to the cardicheck.events topic exchange (M5, confirmed + persistent).
+}

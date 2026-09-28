@@ -15,3 +15,7 @@ assert {
   res.body.error: isNull
   res.body.data.status: eq "cancelled"
 }
+
+docs {
+  A real transition publishes appointment.cancelled (M5); repeating the cancel is a no-op and publishes nothing.
+}
