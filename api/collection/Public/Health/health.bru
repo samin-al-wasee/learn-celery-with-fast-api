@@ -12,7 +12,6 @@ get {
 
 assert {
   res.status: eq 200
-  res.body: contains "data"
-  res.body: contains "ok"
-  res.body: contains "error"
+  res.body.data.status: eq "ok"
+  res.body.error: isNull
 }

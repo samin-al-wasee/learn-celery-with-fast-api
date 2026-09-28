@@ -19,9 +19,9 @@ body:json {
 
 assert {
   res.status: eq 200
-  res.body: contains "data"
-  res.body: contains "access_token"
-  res.body: contains "bearer"
+  res.body.error: isNull
+  res.body.data.access_token: isString
+  res.body.data.token_type: eq "bearer"
 }
 
 script:pre-request {

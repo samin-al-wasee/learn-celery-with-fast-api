@@ -21,10 +21,10 @@ body:json {
 
 assert {
   res.status: eq 201
-  res.body: contains "data"
-  res.body: contains "id"
+  res.body.error: isNull
+  res.body.data.id: isNumber
   res.responseTime: lt 1000
-  res.body: contains "patient"
+  res.body.data.role: eq "patient"
 }
 
 script:post-response {
