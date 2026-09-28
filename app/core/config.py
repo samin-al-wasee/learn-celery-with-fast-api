@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # M3: where finished record exports (CSV) are written.
     export_dir: str = ".outbox/exports"
 
+    # M5: notifications consumer (pika, reads appointment events from RabbitMQ).
+    notify_process_seconds: float = 0.05
+    notify_outbox_dir: str = ".outbox/notifications"
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
