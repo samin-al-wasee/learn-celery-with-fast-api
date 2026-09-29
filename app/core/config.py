@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
 
     database_url: str = "postgresql+asyncpg://cardicheck:cardicheck@localhost:5432/cardicheck"
+    # M6: the notifications service owns its own database (same server, separate DB).
+    notifications_database_url: str = "postgresql+asyncpg://cardicheck:cardicheck@localhost:5432/cardicheck_notifications"
 
     # M2: cache / result backend. Sync redis client (used off the event loop).
     redis_url: str = "redis://localhost:6379/0"
