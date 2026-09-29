@@ -157,6 +157,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Deposit = orchestrated saga: `payments` state row, Celery `collect_deposit` with idempotency key `deposit-{appointment_id}`, compensation (cancel + outbox event) on decline, beat sweep for stuck sagas | Synchronous charge in the request | Observed 3 charges for one deposit after client retries on timeouts, and orphaned bookings on decline |
 | 2026-09-29 | Notifications is its own service: consumer + API (:8300) + database `cardicheck_notifications` with its own Alembic; no FKs to monolith tables; JWT validated locally | Monolith-owned tables written by the consumer | Observed a monolith migration lock on `users` stalling notifications 12s via a FK; own DB: 2s |
 | 2026-09-29 | Public entry point = API gateway (:8080): path routing to monolith / notifications, pooled upstream client, X-Request-ID minted at the edge and logged by every service | Clients calling each service directly; client per proxied request | One base URL for clients; measured +8.4 → +2.3 ms/request; one id traces a request across services |
+| 2026-09-29 | Correlation id is part of every message: event payload `correlation_id` + AMQP property, Celery header `x_request_id`, restored by consumers/workers before logging | HTTP-only request ids | Observed the id vanish at the first queue; now one id follows a booking from gateway to consumer |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

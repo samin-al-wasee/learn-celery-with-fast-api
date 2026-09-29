@@ -29,7 +29,7 @@ Keep it as bullets, not essays.
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
-- **M6 — Microservices / distributed systems** (5 entries: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids)
+- **M6 — Microservices / distributed systems** (complete; 6 entries + interview file: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids; correlation across async hops)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
 
@@ -577,5 +577,36 @@ Keep it as bullets, not essays.
 - **Trap to avoid:** *"The gateway can just proxy, it's trivial"*: a naive proxy added 8 ms per request and erased the link between services' logs. Also avoid reporting every upstream failure as a timeout.
 
 ---
+
+### `2026-09-29 · M6` — correlation ids across async hops: lost at the HTTP boundary → carried in events and task headers
+
+- **What we did:** `scripts/observe_correlation.py` runs monolith + gateway + outbox relay + notifications consumer + Celery worker, sends a signup and a booking through the gateway with known `X-Request-ID`s, and greps every log. **Fix:** `stage_appointment_event` puts `correlation_id` (from the request's contextvar) in the event payload; the publisher sets the AMQP `correlation_id` property; the relay logs `published event_id=… correlation_id=…`; the consumer logs `applied message_id=… correlation_id=…`; Celery signals `before_task_publish` add an `x_request_id` header and `task_prerun` restores it into the contextvar and logs it (`app/worker/celery_app.py`).
+- **Observed (naive):** both ids were in the gateway and monolith logs, and **nowhere else**: worker, relay and consumer all `False`.
+- **Observed (fixed):** signup id in the **worker** log; booking id in the **relay** and **consumer** logs. Regression: email crash 10/10, outbox 5/5 after broker recovery, saga (1 charge; decline compensates), Bruno via gateway 24/24.
+- **Found along the way — Celery already owns `correlation_id`:** my first header was named `correlation_id` and the worker logged the **task id** instead: Celery sets the AMQP `correlation_id` property to the task id (for results), which shadowed the custom header. Renamed to `x_request_id`. Check a library's reserved names before inventing "standard-sounding" ones.
+- **Lesson — context doesn't cross a queue by itself:** a contextvar lives in one process's request; anything that continues the work later (outbox row, broker message, task) must carry the id as data, and every consumer must restore it before logging. This is exactly what OpenTelemetry's context propagation (W3C `traceparent` in HTTP headers and message headers) automates.
+- **Interview answer:** *"A correlation id has to be part of every message contract, not just HTTP: I put it in event payloads and message properties and in task headers, and each consumer restores it into its logging context. Then one id follows a user action from the gateway through the database outbox, the broker, background workers and other services. OpenTelemetry does the same with trace context propagation."*
+- **Trap to avoid:** *"We log a request id, so we have tracing"*, when the id disappears at the first queue, which is exactly where async bugs hide.
+
+---
+
+## M6 — Microservices / distributed systems — INTERVIEW FILE
+
+**Q1: How do you publish an event reliably when you also change the database?**
+> Never as two independent writes: either order loses or invents events on a crash. A transactional outbox writes the event in the same transaction as the change, and a relay publishes it (at-least-once); consumers are idempotent via an inbox. We measured 0/5 events delivered for bookings made while the broker was down with publish-after-commit, 5/5 with the outbox.
+
+**Q2: How do you do a multi-step operation across services without distributed transactions?**
+> A saga: persist its state, make each step idempotent and retryable, and define compensations for steps you can't roll back. A timeout is an unknown outcome, so calls carry idempotency keys; a sweeper re-drives stuck sagas. Without it we charged a patient three times and left orphaned bookings.
+
+**Q3: What goes wrong with synchronous calls between services?**
+> Without deadlines a slow dependency ties up your resources: our bookings held DB connections while waiting and an unrelated endpoint went from 30 ms to 19 s. Use timeouts from your latency budget, never hold connections or transactions across a call, decide between fail-fast and degrade, and add a circuit breaker so a dead dependency costs milliseconds.
+
+**Q4: Why shouldn't services share a database?**
+> Shared tables and foreign keys couple locks, migrations and outages: a monolith migration lock stalled our notifications service for the whole 10 seconds. Each service owns its data (its own DB and migrations), references others by id, and integrates through APIs and events.
+
+**Q5: How do you debug one request across many services?**
+> Propagate a correlation id end to end: the gateway mints it, every HTTP hop forwards it, events and tasks carry it in payloads/headers, every service logs it. Distributed tracing (OpenTelemetry) adds timing spans on the same propagation.
+
+**Trap answer to avoid:** *"Microservices means splitting the code into more containers"*: without owned data, idempotent messaging, deadlines and correlation, you get a distributed monolith with more ways to fail.
 
 > Appends: each of the six topics will get its own section below as we reach it. All future entries should maintain this format so the file stays grep-able.

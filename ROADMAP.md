@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: outbox, sync-call resilience, deposit saga, notifications service, gateway + request ids done.** Next up: correlation id through events/tasks, then M6 interview file.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6 complete (outbox, sync-call resilience, saga, service-owned data, gateway, correlation ids).** Next up: M7 — WebRTC signaling over the chat WebSocket.
 
 ---
 
@@ -124,14 +124,15 @@ Where we are in the plan — each milestone is one learning loop. We update this
 **Learning 2 (deep).** Split the monolith; deal with facts of distributed life.
 
 - [x] **Naive:** notifications "service" writing into the monolith DB with a FK to `users` → a 10s monolith lock stalled it 12.0s ✅
-- [ ] Service boundaries: auth, patients/doctors (core), chat, notifications (✅ notifications extracted: consumer + API :8300)
+- [x] Service boundaries: notifications extracted (consumer + API :8300 + own DB); availability + billing as separate services ✅ — 🚧 auth/chat stay in the monolith (no measured need to split them)
 - [x] Each service owns its data: `cardicheck_notifications` DB + own Alembic, no FKs across services → 2.0s under the same lock ✅
 - [x] Inter-service communication: sync HTTP to the availability service (naive no-timeout call held DB connections → unrelated `/users/me` 19.5s; fixed: release + 2s timeout + degrade + circuit breaker → 0.03s) vs async events (outbox) ✅
 - [x] **Transactional outbox:** publish-after-commit lost 0/5 events with the broker down → `outbox_events` in the booking transaction + `app.events.relay` (5/5, booking 65 → 14 ms) ✅
 - [x] Failures that only exist in distributed systems: timeouts, partial failure (degrade + breaker), idempotency (inbox/outbox), safe retries (idempotency keys), **saga** (deposit: naive 3× charge + orphan → 1 charge, compensation cancels; sweep re-drives stuck sagas) ✅
-- [ ] Event-driven flow: "appointment booked" event → chat created, notifications sent, reminder scheduled
-- [x] API gateway (:8080, pooled, 502/504) + request ids end to end over HTTP (naive +8.4 ms/request, untraceable → +2.3 ms, id in gateway + service logs) ✅ — todo: carry the id through events/tasks; service discovery is static config
-- [ ] LEARNING.md log + interview section (sync vs async comms, saga, exactly-once is impossible, 2PC vs saga)
+- [x] Event-driven flow: `appointment.booked` → notifications (consumer, own DB), reminders (beat scan on DB state), chat per appointment (WS room by id) ✅
+- [x] API gateway (:8080, pooled, 502/504) + request ids end to end over HTTP (naive +8.4 ms/request, untraceable → +2.3 ms, id in gateway + service logs) ✅; ids carried through outbox events, RabbitMQ and Celery headers ✅ (service discovery stays static config)
+- [x] LEARNING.md log + interview section (sync vs async comms, saga, exactly-once is impossible, 2PC vs saga) ✅
+- **M6 scope complete.**
 
 ---
 
@@ -210,3 +211,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M6 | Deposit saga: naive sync charge (client saw 3× 504, billing took 3 charges; decline orphaned the booking) → payments saga state + idempotent Celery step + compensation via outbox + stale-saga sweep (1 charge; declined → cancelled; stuck saga healed). Found: old worker discards unregistered tasks; Bruno email collisions → `$guid` | ✅ |
 | 2026-09-29 | M6 | Service owns its data: notifications consumer/API/DB extracted (own Alembic, no FK); monolith lock on `users` stalled the shared-DB consumer 12.0s vs 2.0s after; monolith tables dropped (migration `d7109adfa53f`) | ✅ |
 | 2026-09-29 | M6 | API gateway: naive client-per-request proxy (+8.4 ms, no correlation) → pooled client + X-Request-ID middleware in all services (+2.3 ms, id in both logs); 502 vs 504 classification; Bruno Gateway env 24/24 | ✅ |
+| 2026-09-29 | M6 | Correlation ids across async hops: lost after HTTP (worker/relay/consumer all False) → payload + AMQP correlation_id + Celery `x_request_id` header (all True; Celery's own `correlation_id` shadowed the first attempt); M6 interview file. **M6 complete** | ✅ |
