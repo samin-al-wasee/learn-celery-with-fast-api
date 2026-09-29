@@ -42,6 +42,8 @@ async def relay_batch(db: AsyncSession) -> tuple[int, bool]:
             break
         row.published_at = datetime.now(timezone.utc)
         published += 1
+        logger.info("published event_id=%s type=%s correlation_id=%s",
+                    row.event_id, row.routing_key, row.payload.get("correlation_id"))
     # M6: a crash between publish and this commit republishes the row next time
     # (at-least-once); consumers are idempotent by event_id (M5 inbox).
     await db.commit()

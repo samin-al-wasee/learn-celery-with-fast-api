@@ -1,6 +1,11 @@
-from celery import Celery
+import logging
+from typing import Any
+
+from celery import Celery, Task
+from celery.signals import before_task_publish, task_prerun
 
 from app.core.config import get_settings
+from app.core.request_id import request_id_var
 
 settings = get_settings()
 
@@ -34,3 +39,23 @@ celery_app.conf.update(
         },
     },
 )
+
+logger = logging.getLogger(__name__)
+
+
+@before_task_publish.connect
+def _attach_correlation_id(headers: dict[str, Any] | None = None, **_: Any) -> None:
+    # M6: carry the publishing request's id in the task message headers. Not "correlation_id":
+    # Celery already uses that name (the AMQP property) for the task id and ours was shadowed.
+    rid = request_id_var.get()
+    if headers is not None and rid != "-":
+        headers.setdefault("x_request_id", rid)
+
+
+@task_prerun.connect
+def _restore_correlation_id(task: Task | None = None, **_: Any) -> None:
+    if task is None:
+        return
+    rid = getattr(task.request, "x_request_id", None) or "-"
+    request_id_var.set(rid)
+    logger.info("task=%s task_id=%s request_id=%s", task.name, task.request.id, rid)

@@ -38,6 +38,7 @@ class EventPublisher:
             delivery_mode=pika.DeliveryMode.Persistent,
             content_type="application/json",
             message_id=str(event.get("event_id", "")),
+            correlation_id=event.get("correlation_id"),
         )
         with self._lock:
             for attempt in (1, 2):

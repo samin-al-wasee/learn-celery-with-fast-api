@@ -95,6 +95,8 @@ def main() -> None:
         try:
             if not handle(body):
                 logger.info("duplicate suppressed delivery_tag=%s", method.delivery_tag)
+            else:
+                logger.info("applied message_id=%s correlation_id=%s", properties.message_id, properties.correlation_id)
         except PoisonMessage as exc:
             # M5: never requeue poison (it would hot-loop); dead-letter it for inspection.
             logger.warning("poison message dead-lettered: %s", exc)
