@@ -65,7 +65,10 @@ Celery (added in M3):
 ```powershell
 celery -A app.worker.celery_app worker -P threads --loglevel=info   # -P threads: prefork doesn't work on Windows   # run a Celery worker
 celery -A app.worker.celery_app flower --port=5555              # Flower UI; auth from FLOWER_BASIC_AUTH (flowerconfig.py)
-python -m app.consumers.notifications                          # M5 pika consumer (appointment.* events)
+python scripts/setup_databases.py                               # per-service databases (then each service's alembic upgrade)
+alembic -c services/notifications/alembic.ini upgrade head      # notifications service migrations (own DB)
+python -m services.notifications.consumer                       # notifications consumer (appointment.* events)
+uvicorn services.notifications.api:app --port 8300              # notifications API (own DB)
 python -m app.events.relay                                     # M6 outbox relay (publishes outbox_events)
 uvicorn services.availability.main:app --port 8100                  # M6 availability service (booking degrades if down)
 uvicorn services.billing.main:app --port 8200                       # M6 fake billing provider (deposit saga)

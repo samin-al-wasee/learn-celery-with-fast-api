@@ -29,7 +29,7 @@ Keep it as bullets, not essays.
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
-- **M6 — Microservices / distributed systems** (3 entries: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation)
+- **M6 — Microservices / distributed systems** (4 entries: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
 
@@ -552,6 +552,17 @@ Keep it as bullets, not essays.
 - **Lesson 3 — orchestration vs choreography:** here one task drives the steps (easy to follow, one place to see state). Choreography (services reacting to each other's events) decouples more but spreads the flow across services; both need idempotency and compensation.
 - **Interview answer:** *"For a multi-step operation across services, like booking plus charging a deposit, I use a saga: I persist its state, run each step idempotently with retries, and define compensations for steps that can't be rolled back, like cancelling the booking if the card is declined. A timeout means I don't know whether the charge happened, so every call to the payment provider carries an idempotency key, and retries return the original result instead of charging again. A sweeper re-drives sagas stuck in an intermediate state, so a lost message can't strand them."*
 - **Trap to avoid:** *"Use a distributed transaction / 2PC"*: the payment provider won't join it, and 2PC blocks on coordinator failure. Also *"on timeout, tell the user it failed and let them retry"*: that's how we charged a patient three times.
+
+### `2026-09-29 · M6` — service boundaries: shared database + FK into the monolith → notifications service owns its data
+
+- **What we did:** Extracted the **notifications service** (`services/notifications/`): consumer (moved from `app/consumers/`), its own HTTP API (`api.py`, :8300, validates the monolith-issued JWT itself), its own database `cardicheck_notifications` (created by `scripts/setup_databases.py`) with **its own Alembic** (`services/notifications/alembic.ini`, revision `3c068b5062f8`), and models with **no foreign keys** into other services (`user_id` is a plain id from the event). The monolith dropped its copies of the tables (migration `d7109adfa53f`, downgrade recreates them) and its `/notifications` route. Observed with `scripts/observe_shared_db.py`: hold `LOCK TABLE users IN ACCESS EXCLUSIVE MODE` on the **monolith** DB for 10s (what a long `ALTER TABLE users` does) and time the consumer on 20 events.
+- **Observed (naive, shared DB + FK):** **12.0s**: every insert waited for the FK check against the locked `users` table, so the notifications service stalled for the whole duration of the monolith's migration.
+- **Observed (fixed, own DB):** **2.0s**: unaffected. Regression: consumer crash+poison 99/99, DLQ 1; cross-host inbox 10 rows, 0 dupes. End to end: monolith-issued JWT → notifications service returns the user's `appointment.booked`; no token → 401; monolith `/notifications` → 404 (moved). Bruno 23/23, 76/76 (the notifications example is tagged `service` until the gateway lands).
+- **Lesson 1 — a shared database makes one deployable unit out of "separate" services:** foreign keys, shared tables and one migration history couple locks, schema changes, capacity and outages. A service boundary is a **data** boundary: each service owns its schema, migrations and connection pool.
+- **Lesson 2 — reference other services' entities by id, not by FK:** referential integrity across services becomes eventual (the event carries the ids); if a user is deleted, the owning service publishes that and consumers react.
+- **Lesson 3 — what we still share (on purpose):** one Postgres *server* (separate databases), the JWT signing secret, and small `app.core` helpers (a "shared kernel"). Separate servers and a token-verification key (asymmetric JWT) would remove the rest; each costs ops effort.
+- **Interview answer:** *"Microservices that share a database aren't independent: a migration or lock in one service's tables blocks the others. We measured our notifications consumer stalling 10 seconds behind a lock the monolith took on its users table, because of a foreign key. Each service owns its data: its own database and migrations, references other services' entities by id from events, and exposes data only through its API or events."*
+- **Trap to avoid:** *"We split the code into services, so we have microservices"* while they still share tables, or *"I'll just join across service databases"*: that recreates the coupling in the query layer.
 
 ---
 

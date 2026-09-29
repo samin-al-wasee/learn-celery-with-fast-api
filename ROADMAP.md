@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: transactional outbox, sync-call resilience, deposit saga done.** Next up: M6 service boundaries (own data) + event-driven flow, then M6 interview file.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: outbox, sync-call resilience, deposit saga, notifications service (own DB) done.** Next up: M6 API gateway (one base URL again) + tracing, then M6 interview file.
 
 ---
 
@@ -123,9 +123,9 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 **Learning 2 (deep).** Split the monolith; deal with facts of distributed life.
 
-- [ ] **Naive:** "microservice" = monolith copied into more containers sharing one DB/port conflict → observation: coupling, race conditions
-- [ ] Service boundaries: auth, patients/doctors (core), chat, notifications
-- [ ] Each service owns its data — no shared SQL tables across services
+- [x] **Naive:** notifications "service" writing into the monolith DB with a FK to `users` → a 10s monolith lock stalled it 12.0s ✅
+- [ ] Service boundaries: auth, patients/doctors (core), chat, notifications (✅ notifications extracted: consumer + API :8300)
+- [x] Each service owns its data: `cardicheck_notifications` DB + own Alembic, no FKs across services → 2.0s under the same lock ✅
 - [x] Inter-service communication: sync HTTP to the availability service (naive no-timeout call held DB connections → unrelated `/users/me` 19.5s; fixed: release + 2s timeout + degrade + circuit breaker → 0.03s) vs async events (outbox) ✅
 - [x] **Transactional outbox:** publish-after-commit lost 0/5 events with the broker down → `outbox_events` in the booking transaction + `app.events.relay` (5/5, booking 65 → 14 ms) ✅
 - [x] Failures that only exist in distributed systems: timeouts, partial failure (degrade + breaker), idempotency (inbox/outbox), safe retries (idempotency keys), **saga** (deposit: naive 3× charge + orphan → 1 charge, compensation cancels; sweep re-drives stuck sagas) ✅
@@ -208,3 +208,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M6 | Transactional outbox: publish-after-commit with the broker down (5× 201, 0/5 events ever delivered) → `outbox_events` staged in the same transaction + relay process with SKIP LOCKED (5/5 after recovery; booking 65 → 14 ms) | ✅ |
 | 2026-09-28 | M6 | Sync service call: availability service; naive no-timeout call while holding a DB connection (unrelated `/users/me` 19.5s) → release + 2s deadline + degrade with `meta.warnings` + circuit breaker (0.03s; dead dependency: 3×2.1s then 0.01s) | ✅ |
 | 2026-09-28 | M6 | Deposit saga: naive sync charge (client saw 3× 504, billing took 3 charges; decline orphaned the booking) → payments saga state + idempotent Celery step + compensation via outbox + stale-saga sweep (1 charge; declined → cancelled; stuck saga healed). Found: old worker discards unregistered tasks; Bruno email collisions → `$guid` | ✅ |
+| 2026-09-29 | M6 | Service owns its data: notifications consumer/API/DB extracted (own Alembic, no FK); monolith lock on `users` stalled the shared-DB consumer 12.0s vs 2.0s after; monolith tables dropped (migration `d7109adfa53f`) | ✅ |

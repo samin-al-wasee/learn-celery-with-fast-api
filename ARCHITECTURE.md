@@ -155,6 +155,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-28 | Domain events go through a transactional outbox (`outbox_events` in the business transaction) and a relay process; the request path never talks to RabbitMQ | Publish after commit (M5) | Observed 0/5 events delivered for bookings made while the broker was down; outbox gave 5/5 and cut booking latency 65 → 14 ms |
 | 2026-09-28 | Booking calls the availability service over HTTP with a 2s deadline, after releasing its DB connection, behind a per-process circuit breaker; failures degrade to a pending booking with `meta.warnings` | No timeout, connection held across the call | Observed an unrelated endpoint stall 19.5s from pool exhaustion; the check is advisory because the doctor confirms every booking |
 | 2026-09-28 | Deposit = orchestrated saga: `payments` state row, Celery `collect_deposit` with idempotency key `deposit-{appointment_id}`, compensation (cancel + outbox event) on decline, beat sweep for stuck sagas | Synchronous charge in the request | Observed 3 charges for one deposit after client retries on timeouts, and orphaned bookings on decline |
+| 2026-09-29 | Notifications is its own service: consumer + API (:8300) + database `cardicheck_notifications` with its own Alembic; no FKs to monolith tables; JWT validated locally | Monolith-owned tables written by the consumer | Observed a monolith migration lock on `users` stalling notifications 12s via a FK; own DB: 2s |
 
 *(Every later milestone appends here with a BECAUSE.)*
 
