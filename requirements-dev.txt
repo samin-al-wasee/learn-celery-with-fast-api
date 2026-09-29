@@ -1,0 +1,3 @@
+-r requirements.txt
+# M7: real WebRTC peers for scripts/observe_call.py (not needed by the API itself)
+aiortc>=1.9

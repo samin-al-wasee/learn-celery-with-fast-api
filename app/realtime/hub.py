@@ -14,26 +14,30 @@ logger = logging.getLogger("uvicorn.error")
 
 
 class ChatHub:
-    """Fans chat messages out across API processes through Redis pub/sub.
+    """Fans messages out across API processes through Redis pub/sub.
 
-    Each process keeps its own sockets per room plus one Redis subscription per room
-    that has local sockets; publish goes to Redis, and every subscribed process
-    forwards the message to its local sockets (including the sender's own process).
+    Each process keeps its own sockets per room (with the socket's user and device) plus one
+    Redis subscription per room that has local sockets; publish goes to Redis, and every
+    subscribed process forwards the message to its matching local sockets.
     """
 
-    def __init__(self, redis_url: str) -> None:
+    def __init__(self, redis_url: str, prefix: str = "chat:appointment") -> None:
         self._redis = aioredis.from_url(redis_url, decode_responses=True)
-        self._rooms: dict[int, set[WebSocket]] = defaultdict(set)
+        self._prefix = prefix
+        self._rooms: dict[int, dict[WebSocket, tuple[int | None, str | None]]] = defaultdict(dict)
         self._listeners: dict[int, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
-    @staticmethod
-    def _channel(room: int) -> str:
-        return f"chat:appointment:{room}"
+    @property
+    def redis(self) -> aioredis.Redis:
+        return self._redis
 
-    async def join(self, room: int, ws: WebSocket) -> None:
+    def _channel(self, room: int) -> str:
+        return f"{self._prefix}:{room}"
+
+    async def join(self, room: int, ws: WebSocket, user_id: int | None = None, device_id: str | None = None) -> None:
         async with self._lock:
-            self._rooms[room].add(ws)
+            self._rooms[room][ws] = (user_id, device_id)
             if room not in self._listeners:
                 pubsub = self._redis.pubsub()
                 # M4: subscribe (and wait for Redis to confirm) before join returns;
@@ -44,7 +48,7 @@ class ChatHub:
 
     async def leave(self, room: int, ws: WebSocket) -> None:
         async with self._lock:
-            self._rooms[room].discard(ws)
+            self._rooms[room].pop(ws, None)
             if not self._rooms[room]:
                 del self._rooms[room]
                 task = self._listeners.pop(room, None)
@@ -54,24 +58,35 @@ class ChatHub:
     async def publish(self, room: int, message: dict[str, Any]) -> None:
         await self._redis.publish(self._channel(room), json.dumps(message))
 
+    @staticmethod
+    def _wants(meta: tuple[int | None, str | None], payload: dict[str, Any]) -> bool:
+        # M7: addressed delivery. "to" = only that user's sockets; "exclude_device" = skip one device.
+        user_id, device_id = meta
+        if "to" in payload and payload["to"] != user_id:
+            return False
+        return not (payload.get("exclude_device") and payload["exclude_device"] == device_id)
+
     async def _listen(self, room: int, pubsub: PubSub) -> None:
         try:
             async for msg in pubsub.listen():
                 if msg.get("type") != "message":
                     continue
                 payload = json.loads(msg["data"])
-                for ws in list(self._rooms.get(room, ())):
+                for ws, meta in list(self._rooms.get(room, {}).items()):
+                    if not self._wants(meta, payload):
+                        continue
                     try:
                         await ws.send_json(payload)
                     except Exception:
                         # A dead socket must not stop delivery to the others in the room.
-                        self._rooms[room].discard(ws)
+                        self._rooms[room].pop(ws, None)
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("chat listener crashed room=%s", room)
+            logger.exception("hub listener crashed channel=%s", self._channel(room))
         finally:
             await pubsub.aclose()
 
 
 hub = ChatHub(get_settings().redis_url)
+call_hub = ChatHub(get_settings().redis_url, prefix="call:appointment")
