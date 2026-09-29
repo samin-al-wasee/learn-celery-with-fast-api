@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6 complete. M7 complete (signaling, mesh vs SFU).** Next up: M8 — senior hardening (the deferred items: shared circuit breaker, cross-worker cache lock, retries, rate limiting, typing debt).
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6 complete. M7 complete. M8: login throttling done.** Next up: M8 cross-worker cache stampede lock, typing debt (mypy), then the final interview cheat sheet.
 
 ---
 
@@ -152,7 +152,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Milestone 8 — Senior hardening / review sweep
 
-- [ ] Dedup, retries, circuit breakers (per-process breaker done in M6; shared breaker todo), rate limiting, backpressure — revisit each topic's caveat
+- [ ] Dedup, retries, circuit breakers (per-process breaker done in M6; shared breaker todo), rate limiting (✅ login: in-process 10 checks + reset on restart → Redis counter: 5, survives restart), backpressure — revisit each topic's caveat
 - [ ] Observability: structured logs, metrics, distributed tracing across services
 - [ ] Seeding/load-testing the failure modes we only simulated earlier
 - [ ] Revise all `LEARNING.md` interview sections into a final interview-prep cheat sheet
@@ -215,3 +215,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-29 | M6 | Correlation ids across async hops: lost after HTTP (worker/relay/consumer all False) → payload + AMQP correlation_id + Celery `x_request_id` header (all True; Celery's own `correlation_id` shadowed the first attempt); M6 interview file. **M6 complete** | ✅ |
 | 2026-09-29 | M7 | WebRTC signaling with real aiortc peers: naive blind relay (own offer echoed, cross-process never connected, double answer masked) → addressed frames + call_hub pub/sub (connected, 0 errors) → first answer wins via Redis SET NX (two devices: exactly one connected) | ✅ |
 | 2026-09-30 | M7 | Group calls with real aiortc peers: mesh uplink/participant 331 → 1,294 KB/s (N=2→5), CPU 0.7 → 11.2 s; SFU flat ~331 KB/s, server 6.6 MB/s; one unexplained sfu(4) stall → per-phase deadlines; M7 interview file. **M7 complete** | ✅ |
+| 2026-09-30 | M8 | Login throttling: in-process counters (10 password checks across 2 processes, 5 more after restart) → Redis INCR + EXPIRE NX shared counter (5 checks, 0 after restart, 429 + Retry-After), checked before argon2 | ✅ |

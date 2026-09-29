@@ -160,6 +160,7 @@ WebRTC signaling over WebSocket inside the chat service; media flows P2P (mesh) 
 | 2026-09-29 | Correlation id is part of every message: event payload `correlation_id` + AMQP property, Celery header `x_request_id`, restored by consumers/workers before logging | HTTP-only request ids | Observed the id vanish at the first queue; now one id follows a booking from gateway to consumer |
 | 2026-09-29 | Call signaling over `/ws/appointments/{id}/call`: server-stamped sender, addressed to the other participant, fanned out via `call_hub` (Redis pub/sub), first answer claims the call with `SET NX` | Blind relay to the room | Observed echoed offers (InvalidStateError), no cross-process delivery, and double answers from a second device |
 | 2026-09-30 | 1-on-1 calls stay peer-to-peer; group calls (3+) go through an off-the-shelf SFU (LiveKit/mediasoup), with TURN provisioned | Full mesh for groups; a home-grown SFU | Measured mesh uplink per participant growing 331 → 1,294 KB/s from 2 to 5 people while SFU stayed flat; aiortc's transcoding relay is a demo, not a server |
+| 2026-09-30 | Login throttling via a shared Redis counter per IP+email (hashed), checked before argon2, fail-open | In-process counters | Measured 2× the allowed attempts with two processes and a full reset on restart |
 
 *(Every later milestone appends here with a BECAUSE.)*
 

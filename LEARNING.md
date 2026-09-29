@@ -31,7 +31,7 @@ Keep it as bullets, not essays.
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
 - **M6 — Microservices / distributed systems** (complete; 6 entries + interview file: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids; correlation across async hops)
 - **M7 — Voice/video calling** (complete; 2 entries + interview file: signaling — addressed, cross-process, first answer wins; mesh vs SFU measured)
-- **M8 — Senior hardening** (empty)
+- **M8 — Senior hardening** (1 entry: login throttling shared across processes)
 
 ---
 
@@ -664,6 +664,21 @@ Keep it as bullets, not essays.
 **Why this project covers WebRTC:** it combines everything earlier: authenticated WebSockets and pub/sub (M4), atomic cross-instance claims (M2/M6), deadlines on anything that can hang (M6), and a data plane (media) whose cost is bandwidth rather than requests per second.
 
 **Trap answer to avoid:** *"WebRTC is peer-to-peer, so we don't need servers"*: you need signaling, STUN, TURN for the calls that can't connect directly, and an SFU for anything beyond a few participants.
+
+---
+
+## M8 — Senior hardening
+
+### `2026-09-30 · M8` — login throttling: per-process counters → one Redis counter for every process
+
+- **What we did:** Failed logins are limited per client IP + email (`LOGIN_MAX_FAILURES`=5 per `LOGIN_WINDOW_SECONDS`=60), checked **before** the DB lookup and the ~30 ms argon2 verify; over the limit → `429 TOO_MANY_ATTEMPTS` with `Retry-After` (`CardicheckError` gained `headers`). **Naive:** a `dict` of failure timestamps in the process. **Fix:** `app/core/rate_limit.py`: Redis `INCR` + `EXPIRE NX` in one transaction (window starts at the first failure), subject hashed (no plain emails in the cache), fail-open with a warning if Redis is down. Observed with `scripts/observe_rate_limit.py`: two API processes, 20 wrong passwords alternating between them, then both restarted and 5 more.
+- **Observed (naive):** **10 password checks** (5 per process) before throttling; after a restart **5 more** (counters wiped).
+- **Observed (fixed):** **5** checks in total, the other 15 → 429; after the restart **0** checks. 6th attempt: `429`, `Retry-After: 60`. Bruno: new `login-wrong-password.bru` (401 contract); collection 24/24, 78/78.
+- **Lesson 1 — a limit is only as strong as its counter's scope:** per-process state multiplies the limit by the number of workers and resets on every deploy. That's the M2 in-process-cache mistake, now in security code, where attackers actively exploit it.
+- **Lesson 2 — throttle before the expensive work:** checking the limit before argon2 means an attacker can't burn CPU either (each verify is ~30 ms of threadpool time, see M1).
+- **Trade-offs (decided, not accidental):** *fail open* when Redis is down keeps login available but unthrottled (logged); a bank would fail closed. Keying on IP + email means an attacker can lock one user out from their own IP only, not globally, but distributed attacks from many IPs need an additional per-account (or global) limit plus CAPTCHA. The counters live in the `allkeys-lru` cache Redis, so heavy memory pressure could evict them: security state belongs on a non-evicting Redis (same conclusion as the Celery result backend in M2/M3).
+- **Interview answer:** *"I rate-limit logins with a counter in Redis that every API instance shares, incremented atomically with a TTL for the window, and I check it before doing the expensive password hash. A per-process counter looks fine on one worker but gives an attacker N times the attempts with N workers and resets on every deploy; we measured 10 attempts instead of 5 with two processes. Blocked requests get 429 with Retry-After, and I decide explicitly whether the limiter fails open or closed if Redis is down."*
+- **Trap to avoid:** *"Add a rate limit middleware with an in-memory store"*: it's per process. And don't key only on IP (NAT'd offices share one) or only on email (lets anyone lock any account out).
 
 ---
 
