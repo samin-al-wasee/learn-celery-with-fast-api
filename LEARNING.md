@@ -30,7 +30,7 @@ Keep it as bullets, not essays.
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
 - **M6 — Microservices / distributed systems** (complete; 6 entries + interview file: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids; correlation across async hops)
-- **M7 — Voice/video calling** (1 entry: signaling — addressed, cross-process, first answer wins)
+- **M7 — Voice/video calling** (complete; 2 entries + interview file: signaling — addressed, cross-process, first answer wins; mesh vs SFU measured)
 - **M8 — Senior hardening** (empty)
 
 ---
@@ -623,6 +623,47 @@ Keep it as bullets, not essays.
 - **Scope honesty:** aiortc peers on one machine connect over host candidates, so STUN/TURN (NAT traversal) isn't exercised here; ICE candidates travel inside the SDP (aiortc gathers before creating the description), so trickle ICE isn't exercised either.
 - **Interview answer:** *"WebRTC needs a signaling channel to exchange SDP offers, answers and ICE candidates before peers can connect; media then goes peer-to-peer, or through TURN when NAT blocks it. I run signaling over an authenticated WebSocket, but as addressed messages: the server stamps the sender, routes to the other participant only, and fans out across server instances through pub/sub. When a user has several devices, the first answer atomically claims the call and the other devices are told it was answered elsewhere."*
 - **Trap to avoid:** *"The signaling server just relays everything to the room"*: it echoes offers back to the caller and lets several devices answer the same call.
+
+---
+
+### `2026-09-30 · M7` — group calls: full mesh → SFU (measured with real WebRTC peers)
+
+- **What we did:** `scripts/observe_group_call.py` runs N = 2..5 real aiortc participants, each sending a synthetic noise video (320x240 @ 15 fps, so VP8 has real work) for 6s, and reads RTP `bytesSent` from `getStats()`. **Naive:** full mesh (a peer connection to every other participant: N−1 encodes + uploads each). **Fix:** SFU topology: each participant uploads once to a forwarding server (aiortc `MediaRelay`), which sends the other N−1 streams back. Signaling is in-process here (this measures topology, not our WebSocket).
+- **Observed:**
+
+  | N | mesh uplink / participant | encodes | mesh CPU | SFU uplink / participant | SFU server uplink |
+  |---|---|---|---|---|---|
+  | 2 | 331 KB/s | 1 | 0.7 s | 332 KB/s | 655 KB/s |
+  | 3 | 671 KB/s | 2 | 2.2 s | 331 KB/s | 1,965 KB/s |
+  | 4 | 994 KB/s | 3 | 5.4 s | 331 KB/s | 3,930 KB/s |
+  | 5 | **1,294 KB/s (~10.4 Mbps)** | 4 | **11.2 s** | **335 KB/s** | **6,591 KB/s** |
+
+- **Lesson 1 — mesh cost grows with the room, per participant:** each person's uplink is (N−1) × one stream and the CPU grows with the number of encodes (0.7 s → 11.2 s total here). A phone or home uplink runs out around 4–5 people, and the weakest participant degrades everyone's call.
+- **Lesson 2 — an SFU moves the fan-out to the server:** participant uplink stays at one stream (~331 KB/s at every N); the server pays N×(N−1) (6.6 MB/s at N=5 for one tiny room), which is a datacenter-bandwidth problem instead of a client problem. Simulcast (each client uploads 2–3 qualities, the SFU picks per viewer) is the next lever; an MCU (mixing into one stream) saves client downlink too but costs heavy server CPU.
+- **Lesson 3 — real SFUs forward, they don't transcode:** aiortc's `MediaRelay` decodes and re-encodes per viewer in Python. An earlier run had `sfu(4)` fail to finish within 120 s, while a later identical run finished every phase in 16 s. **Cause unverified** (my first guess, event-loop starvation from the transcoding, isn't proven by the passing re-run). Production SFUs (LiveKit, mediasoup, Janus) forward RTP packets without decoding and are written in Go/C++/Rust. We'd deploy one of those, not build one.
+- **Found along the way — deadlines on experiments too:** the first full runs just sat there printing only the header for 10 minutes; wrapping every phase in `asyncio.wait_for` turned that into a labelled failure. Same rule as M6 remote calls: nothing should be able to wait forever, not even a measurement script. Also: aiortc peer setup takes ~10 s on this machine because ICE gathers candidates on every interface (Docker, WSL, vEthernet adapters).
+- **Interview answer:** *"For 1-on-1 calls peer-to-peer is ideal. For groups a full mesh makes every participant upload their video once per other participant; we measured uplink growing from 331 KB/s at two people to about 1.3 MB/s at five, with CPU growing faster than that. An SFU fixes it: everyone uploads once and the server forwards streams to each viewer, keeping client uplink flat, with simulcast so each viewer gets a quality it can handle. The cost moves to server bandwidth, so you run a purpose-built SFU like LiveKit or mediasoup."*
+- **Trap to avoid:** *"Mesh is fine, WebRTC is peer-to-peer"*: it doesn't scale past a handful of people. Also avoid *"an SFU mixes the streams"*: that's an MCU; an SFU forwards.
+
+---
+
+## M7 — Voice & video calling — INTERVIEW FILE
+
+**Q1: Walk me through how a WebRTC call is established.**
+> Both peers create an RTCPeerConnection. The caller creates an SDP offer (codecs, media, ICE candidates) and sends it through a signaling channel that WebRTC doesn't provide (ours is an authenticated WebSocket). The callee sets it as the remote description and returns an answer. Peers exchange ICE candidates (possibly trickled), run connectivity checks, then DTLS-SRTP encrypts the media, which flows peer-to-peer or via TURN.
+
+**Q2: What are STUN and TURN for?** *(explained, not measured: every peer here ran on one machine, so only host candidates were needed)*
+> Most devices sit behind NAT. STUN lets a peer discover its public address (a server-reflexive candidate) so peers can try to connect directly. When NATs or firewalls block direct paths (symmetric NAT, corporate networks), TURN relays the media through a server; it always works but costs bandwidth, so it's the fallback. Production deployments always provide TURN, usually on 443/TLS.
+
+**Q3: Why does signaling need care in a multi-instance backend?**
+> Signaling is addressed messaging between specific peers and devices. Relaying blindly echoes an offer back to its sender and lets several devices answer; instances need a pub/sub bus to reach peers connected elsewhere; and "first device to answer wins" needs an atomic claim across instances (we used Redis SET NX). We saw all three failures.
+
+**Q4: Mesh vs SFU vs MCU?**
+> Mesh: every participant sends to every other participant, so uplink and CPU grow with N (measured 331 KB/s → 1.3 MB/s from 2 to 5 people). SFU: one upload per participant, the server forwards (flat client uplink, server pays the fan-out; add simulcast). MCU: server decodes and mixes into one stream per viewer, lowest client cost, highest server CPU and latency.
+
+**Why this project covers WebRTC:** it combines everything earlier: authenticated WebSockets and pub/sub (M4), atomic cross-instance claims (M2/M6), deadlines on anything that can hang (M6), and a data plane (media) whose cost is bandwidth rather than requests per second.
+
+**Trap answer to avoid:** *"WebRTC is peer-to-peer, so we don't need servers"*: you need signaling, STUN, TURN for the calls that can't connect directly, and an SFU for anything beyond a few participants.
 
 ---
 

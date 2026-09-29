@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6 complete. M7: signaling (addressed, cross-process, multi-device) done.** Next up: M7 mesh vs SFU (group calls) + NAT/TURN notes, then M7 interview file.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6 complete. M7 complete (signaling, mesh vs SFU).** Next up: M8 — senior hardening (the deferred items: shared circuit breaker, cross-worker cache lock, retries, rate limiting, typing debt).
 
 ---
 
@@ -140,12 +140,13 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 **Learning 5 (final stretch).** Real-time media over WebRTC — the hardest topic, done last.
 
-- [ ] WebRTC fundamentals: signaling, SDP, ICE/STUN/TURN; media over UDP vs TCP
+- [x] WebRTC fundamentals: signaling + SDP exercised with real aiortc peers; ICE/STUN/TURN explained in the interview file (not observable on one machine) ✅
 - [x] Signaling server in FastAPI (`/ws/appointments/{id}/call`): naive blind relay (echoed offer, cross-process not connected) → addressed + Redis pub/sub → connected, 0 errors (real aiortc peers) ✅
 - [x] 1-on-1 calls; room management; identity on calls: server-stamped `from`/device, participants only, multi-device first-answer-wins (`SET NX`) ✅
-- [ ] Media server options (SFU like mediasoup/livekit) — when a client-to-client P2P mesh stops working (N+1 calls)
-- [ ] Why this project covers it: forces real-time, stateful, multi-peer reasoning
-- [ ] LEARNING.md log + interview section (WebRTC flow, STUN vs TURN, mesh vs SFU, UDP + retransmission vs TCP)
+- [x] Mesh vs SFU measured (N=2..5): mesh uplink/participant 331 → 1,294 KB/s, CPU 0.7 → 11.2 s; SFU flat ~331 KB/s, server 6.6 MB/s at N=5 → production: LiveKit/mediasoup ✅
+- [x] Why this project covers it: ties together WS + pub/sub, atomic claims, deadlines, and bandwidth-bound data planes ✅
+- [x] LEARNING.md log + interview section (WebRTC flow, STUN vs TURN, mesh vs SFU) ✅
+- **M7 scope complete.**
 
 ---
 
@@ -213,3 +214,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-29 | M6 | API gateway: naive client-per-request proxy (+8.4 ms, no correlation) → pooled client + X-Request-ID middleware in all services (+2.3 ms, id in both logs); 502 vs 504 classification; Bruno Gateway env 24/24 | ✅ |
 | 2026-09-29 | M6 | Correlation ids across async hops: lost after HTTP (worker/relay/consumer all False) → payload + AMQP correlation_id + Celery `x_request_id` header (all True; Celery's own `correlation_id` shadowed the first attempt); M6 interview file. **M6 complete** | ✅ |
 | 2026-09-29 | M7 | WebRTC signaling with real aiortc peers: naive blind relay (own offer echoed, cross-process never connected, double answer masked) → addressed frames + call_hub pub/sub (connected, 0 errors) → first answer wins via Redis SET NX (two devices: exactly one connected) | ✅ |
+| 2026-09-30 | M7 | Group calls with real aiortc peers: mesh uplink/participant 331 → 1,294 KB/s (N=2→5), CPU 0.7 → 11.2 s; SFU flat ~331 KB/s, server 6.6 MB/s; one unexplained sfu(4) stall → per-phase deadlines; M7 interview file. **M7 complete** | ✅ |
