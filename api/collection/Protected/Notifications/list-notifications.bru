@@ -8,7 +8,7 @@ meta {
 }
 
 get {
-  url: {{notificationsUrl}}/api/v1/notifications?limit=50
+  url: {{baseUrl}}/api/v1/notifications?limit=50
   body: none
   auth: inherit
 }
@@ -18,6 +18,7 @@ assert {
   res.body.error: isNull
   res.body.data: isArray
   res.body.meta: isDefined
+  res.headers['x-request-id']: isString
 }
 
 docs {
@@ -25,5 +26,6 @@ docs {
   Served by the notifications SERVICE (M6: own process + own database), not the monolith:
   uvicorn services.notifications.api:app --port 8300. It validates the monolith-issued JWT itself.
   Rows come from python -m services.notifications.consumer (appointment.* events, inbox dedup).
-  Tag `service`: excluded from verify.ps1 -Bruno until the gateway puts it behind baseUrl.
+  Reached through the API gateway (env Gateway: baseUrl = :8080 routes /api/v1/notifications here).
+  Tag `service`: excluded when env Development points baseUrl straight at the monolith.
 }
