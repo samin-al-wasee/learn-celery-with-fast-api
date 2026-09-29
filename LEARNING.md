@@ -29,7 +29,7 @@ Keep it as bullets, not essays.
 - **M3 — Celery & async jobs** (complete; 5 entries: thread-per-request → Celery acks_late + retries; idempotency key vs at-least-once duplicates; long-ETA reminders → beat DB scan; job status: result backend → export_jobs table; Flower events + auth) + interview file
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
-- **M6 — Microservices / distributed systems** (4 entries: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data)
+- **M6 — Microservices / distributed systems** (5 entries: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids)
 - **M7 — Voice/video calling** (empty)
 - **M8 — Senior hardening** (empty)
 
@@ -563,6 +563,18 @@ Keep it as bullets, not essays.
 - **Lesson 3 — what we still share (on purpose):** one Postgres *server* (separate databases), the JWT signing secret, and small `app.core` helpers (a "shared kernel"). Separate servers and a token-verification key (asymmetric JWT) would remove the rest; each costs ops effort.
 - **Interview answer:** *"Microservices that share a database aren't independent: a migration or lock in one service's tables blocks the others. We measured our notifications consumer stalling 10 seconds behind a lock the monolith took on its users table, because of a foreign key. Each service owns its data: its own database and migrations, references other services' entities by id from events, and exposes data only through its API or events."*
 - **Trap to avoid:** *"We split the code into services, so we have microservices"* while they still share tables, or *"I'll just join across service databases"*: that recreates the coupling in the query layer.
+
+### `2026-09-29 · M6` — API gateway + request ids: client per request, untraceable → pooled proxy, X-Request-ID end to end
+
+- **What we did:** `services/gateway/main.py` (:8080) routes `/api/v1/notifications*` to the notifications service and everything else to the monolith, so clients have one base URL again (WebSocket chat still goes straight to the monolith). **Naive:** `async with httpx.AsyncClient()` per request, no correlation id. **Fix:** one pooled client for the gateway's lifetime (lifespan, `Timeout(10, connect=2)`), 502/504 envelopes; `app/core/request_id.py` middleware (installed in gateway, monolith, notifications API) accepts or mints `X-Request-ID`, keeps it in a contextvar, returns it, and logs one line per request; the gateway forwards it upstream. Bruno: new `environments/Gateway.bru` (baseUrl = gateway), `verify.ps1 -BrunoEnv Gateway` also runs the `service`-tagged examples. Observed with `scripts/observe_gateway.py`.
+- **Observed (naive):** direct 0.45 ms vs via gateway **8.82 ms (+8.4 ms/request)**; responses had **no request id**, and neither log could be tied to the other.
+- **Observed (fixed):** direct 0.65 ms vs gateway 2.98 ms (**+2.3 ms**); `/users/me` and `/notifications` each returned an `x-request-id` found in **both** the gateway log and the target service's log. Bruno: Development 23/23 (76/76); **Gateway 24/24 (81/81)**, including notifications through one base URL.
+- **Found along the way:** with the notifications service stopped the gateway first answered **504 UPSTREAM_TIMEOUT**; on Windows a refused connect surfaces as a `ConnectTimeout` after ~2s (see the availability entry). Connect failures now map to **502 UPSTREAM_UNAVAILABLE** ("can't reach it"), and only read timeouts to 504 ("it's slow").
+- **Lesson 1 — the gateway is on every request:** any per-request cost is multiplied by all traffic; pooling upstream connections is the difference between +8 ms and +2 ms here. It also becomes the place for cross-cutting concerns (auth pre-checks, rate limits, CORS, request ids), and a new single point of failure to run redundantly.
+- **Lesson 2 — correlation ids make a distributed request debuggable:** mint at the edge, forward on every hop, log everywhere, return to the client (support can ask for it). This is the minimal version of distributed tracing; OpenTelemetry adds spans and timing per hop on top of the same idea.
+- **Next gap (honest):** the id stops at the HTTP boundary: outbox events, Celery tasks and the notifications consumer don't carry it yet.
+- **Interview answer:** *"An API gateway gives clients one entry point and routes to the owning service, and it's the natural place for cross-cutting concerns. Because it sits on every request, it must pool upstream connections and fail fast with clear 502/504s. For observability I propagate a correlation id: the gateway mints or accepts X-Request-ID, forwards it, every service logs it and returns it, so one id finds a request's whole path across services."*
+- **Trap to avoid:** *"The gateway can just proxy, it's trivial"*: a naive proxy added 8 ms per request and erased the link between services' logs. Also avoid reporting every upstream failure as a timeout.
 
 ---
 

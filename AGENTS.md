@@ -80,12 +80,13 @@ python scripts/setup_databases.py                               # per-service da
 alembic -c services/notifications/alembic.ini upgrade head      # notifications service migrations (own DB)
 python -m services.notifications.consumer                       # notifications consumer (appointment.* events)
 uvicorn services.notifications.api:app --port 8300              # notifications API (own DB)
+uvicorn services.gateway.main:app --port 8080                  # API gateway: one base URL (Bruno env Gateway)
 python -m app.events.relay                                     # M6 outbox relay (publishes outbox_events)
 uvicorn services.availability.main:app --port 8100                  # M6 availability service (booking degrades if down)
 uvicorn services.billing.main:app --port 8200                       # M6 fake billing provider (deposit saga)
 alembic upgrade head                       # apply migrations
 pytest                                     # run tests (once tests exist)
-.\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script> | -Bruno)
+.\scripts\verify.ps1                       # VERIFY gate (-Quick | -RequireDocs | -Observe <script> | -Bruno [-BrunoEnv Gateway])
 ```
 
 Prefer PowerShell for this repo. Do not `cd` inside commands — use the `workdir` parameter.

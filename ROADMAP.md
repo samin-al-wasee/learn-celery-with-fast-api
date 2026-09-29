@@ -8,7 +8,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 
 ## Current status
 
-> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: outbox, sync-call resilience, deposit saga, notifications service (own DB) done.** Next up: M6 API gateway (one base URL again) + tracing, then M6 interview file.
+> Phase **1 — M1 complete; M2 caching complete; M3: thread-per-request → Celery (acks_late + retries) done. M3 complete. M4 complete. M5: consumer (acks/prefetch/DLX), publisher (confirms/mandatory/persistent, topic routing), backpressure, inbox consumer — M5 complete. M6: outbox, sync-call resilience, deposit saga, notifications service, gateway + request ids done.** Next up: correlation id through events/tasks, then M6 interview file.
 
 ---
 
@@ -130,7 +130,7 @@ Where we are in the plan — each milestone is one learning loop. We update this
 - [x] **Transactional outbox:** publish-after-commit lost 0/5 events with the broker down → `outbox_events` in the booking transaction + `app.events.relay` (5/5, booking 65 → 14 ms) ✅
 - [x] Failures that only exist in distributed systems: timeouts, partial failure (degrade + breaker), idempotency (inbox/outbox), safe retries (idempotency keys), **saga** (deposit: naive 3× charge + orphan → 1 charge, compensation cancels; sweep re-drives stuck sagas) ✅
 - [ ] Event-driven flow: "appointment booked" event → chat created, notifications sent, reminder scheduled
-- [ ] API gateway + service discovery basics; observability (structured logs, tracing)
+- [x] API gateway (:8080, pooled, 502/504) + request ids end to end over HTTP (naive +8.4 ms/request, untraceable → +2.3 ms, id in gateway + service logs) ✅ — todo: carry the id through events/tasks; service discovery is static config
 - [ ] LEARNING.md log + interview section (sync vs async comms, saga, exactly-once is impossible, 2PC vs saga)
 
 ---
@@ -209,3 +209,4 @@ Where we are in the plan — each milestone is one learning loop. We update this
 | 2026-09-28 | M6 | Sync service call: availability service; naive no-timeout call while holding a DB connection (unrelated `/users/me` 19.5s) → release + 2s deadline + degrade with `meta.warnings` + circuit breaker (0.03s; dead dependency: 3×2.1s then 0.01s) | ✅ |
 | 2026-09-28 | M6 | Deposit saga: naive sync charge (client saw 3× 504, billing took 3 charges; decline orphaned the booking) → payments saga state + idempotent Celery step + compensation via outbox + stale-saga sweep (1 charge; declined → cancelled; stuck saga healed). Found: old worker discards unregistered tasks; Bruno email collisions → `$guid` | ✅ |
 | 2026-09-29 | M6 | Service owns its data: notifications consumer/API/DB extracted (own Alembic, no FK); monolith lock on `users` stalled the shared-DB consumer 12.0s vs 2.0s after; monolith tables dropped (migration `d7109adfa53f`) | ✅ |
+| 2026-09-29 | M6 | API gateway: naive client-per-request proxy (+8.4 ms, no correlation) → pooled client + X-Request-ID middleware in all services (+2.3 ms, id in both logs); 502 vs 504 classification; Bruno Gateway env 24/24 | ✅ |
