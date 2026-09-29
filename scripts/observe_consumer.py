@@ -3,7 +3,7 @@
 Usage:  python scripts/observe_consumer.py [no-kill]
 
 Publishes 100 persistent `appointment.booked` events to the topic exchange (event #50
-is poison: not JSON), starts `python -m app.consumers.notifications`, hard-kills it
+is poison: not JSON), starts `python -m services.notifications.consumer`, hard-kills it
 after 1s, and then acts as a process supervisor (restart whenever it dies) until the
 queue drains. Reports processed / lost / duplicates / crashes / dead-lettered.
 """
@@ -20,9 +20,9 @@ import pika  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.consumers import notifications as consumer
-from app.models import ProcessedEvent
-from app.worker.db import run_db
+from services.notifications import consumer
+from services.notifications.db import run_db
+from services.notifications.models import ProcessedEvent
 
 N = 100
 POISON_AT = 50
@@ -41,7 +41,7 @@ def rabbit_depth(queue: str) -> tuple[int, int]:
 
 
 def start(env: dict[str, str], n: int) -> subprocess.Popen:
-    return subprocess.Popen([sys.executable, "-m", "app.consumers.notifications"], env=env,
+    return subprocess.Popen([sys.executable, "-m", "services.notifications.consumer"], env=env,
                             stdout=subprocess.DEVNULL, stderr=open(f".outbox/consumer-{n}.err", "w"))
 
 

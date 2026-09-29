@@ -24,10 +24,10 @@ import pika  # type: ignore[import-untyped]
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.consumers import notifications as consumer
+from services.notifications import consumer
 from app.events.rabbit import EXCHANGE, connection_params
-from app.models import Notification
-from app.worker.db import run_db
+from services.notifications.db import run_db
+from services.notifications.models import Notification
 from scripts.observe_consumer import rabbit_depth
 from scripts.observe_email_jobs import start_api
 from scripts.observe_publisher import reset
@@ -45,7 +45,7 @@ async def signup_patient() -> int:
 
 def start_consumer(env: dict[str, str], host: str, ack_delay: float) -> subprocess.Popen:
     return subprocess.Popen(
-        [sys.executable, "-m", "app.consumers.notifications"],
+        [sys.executable, "-m", "services.notifications.consumer"],
         env={**env, "NOTIFY_OUTBOX_DIR": f".outbox/inbox-{host}", "NOTIFY_ACK_DELAY_SECONDS": str(ack_delay)},
         stdout=subprocess.DEVNULL, stderr=open(f".outbox/consumer-{host}.err", "w"),
     )

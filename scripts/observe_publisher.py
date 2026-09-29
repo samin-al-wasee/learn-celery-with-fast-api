@@ -16,7 +16,7 @@ import uuid
 
 import pika  # type: ignore[import-untyped]
 
-from app.consumers import notifications as consumer
+from services.notifications import consumer
 from app.events import publisher
 from app.events.rabbit import EXCHANGE, connection_params
 

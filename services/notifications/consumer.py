@@ -1,6 +1,6 @@
-"""Notifications consumer: reads appointment domain events straight from RabbitMQ (no Celery).
+"""Notifications service consumer: appointment domain events from RabbitMQ -> its own database.
 
-Run:  python -m app.consumers.notifications
+Run:  python -m services.notifications.consumer
 """
 import json
 import logging
@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.events.rabbit import EXCHANGE, connection_params
-from app.models import Notification, ProcessedEvent
-from app.worker.db import run_db
+from services.notifications.db import run_db
+from services.notifications.models import Notification, ProcessedEvent
 
 logger = logging.getLogger("notifications")
 
