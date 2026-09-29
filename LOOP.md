@@ -64,7 +64,7 @@ So one learning topic = **two passes** through IMPLEMENT → TEST (naive, then f
 - **Exit gate:** `scripts/verify.ps1 -RequireDocs` passes (docs are in the diff).
 
 ### 6. REPEAT
-- **Gate the commit on the exit code, not on reading the output:** `.\scripts\verify.ps1 -RequireDocs; if ($LASTEXITCODE) { throw }` before any `git commit`/merge in the same chain. (2026-09-28: a docs script failed mid-way, verify printed RED, and a blindly chained commit + merge still landed partial docs on `main`.)
+- **Gate the commit on the exit code, not on reading the output:** `.\scripts\verify.ps1 -RequireDocs; if ($LASTEXITCODE) { throw }` before any `git commit`/merge in the same chain. (2026-09-28: a docs script failed mid-way, verify printed RED, and a blindly chained commit + merge still landed partial docs on `main`.) `$ErrorActionPreference = "Stop"` does **not** cover native commands like `git`: wrap them (`function Git-Ok { git @args; if ($LASTEXITCODE) { throw } }`). (2026-09-29: a failed `git add` let the next commit sweep up earlier staged renames; the branch was rebuilt with `reset --soft` before merging.)
 - **Do:** report the iteration (template below), propose the commit(s). **Never commit, branch, or merge unless the user asks** (`AGENTS.md §8`).
 - Then either start the next PLAN (next roadmap item) or **stop**.
 
