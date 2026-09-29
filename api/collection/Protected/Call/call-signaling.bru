@@ -1,0 +1,33 @@
+meta {
+  name: Call Signaling (WebSocket)
+  type: ws
+  seq: 1
+  tags: [
+    ws
+  ]
+}
+
+ws {
+  url: ws://localhost:8000/api/v1/ws/appointments/{{appt_id}}/call
+  auth: none
+}
+
+body:ws {
+  name: auth
+  type: json
+  content: '''
+    {"type": "auth", "token": "{{access_token}}"}
+  '''
+  selected: true
+}
+
+docs {
+  WebRTC signaling for one appointment (M7). First frame: {"type": "auth", "token": "<jwt>"};
+  the server replies {"type": "joined", "device_id", "peer_id"}. Then send
+  {"type": "offer" | "answer" | "candidate" | "hangup", "sdp": ..., "call_id": "<uuid>"}.
+  The server stamps "from"/"from_device" and always addresses the OTHER participant (no echo);
+  frames cross API processes via Redis pub/sub. With several devices, the first answer wins
+  (Redis SET NX): later answers get {"type": "error", "code": "ALREADY_ANSWERED"} and the
+  callee's other devices get {"type": "answered_elsewhere"}.
+  Bruno CLI 4.2 can't run ws; headless check with real WebRTC peers: python scripts/observe_call.py
+}
