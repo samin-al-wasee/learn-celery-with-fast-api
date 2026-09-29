@@ -30,7 +30,7 @@ Keep it as bullets, not essays.
 - **M4 — Real-time chat / bidirectional comms** (complete; 2 entries: in-process WS registry → Redis pub/sub; Postgres log + replay + client_msg_id dedup) + interview file
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
 - **M6 — Microservices / distributed systems** (complete; 6 entries + interview file: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids; correlation across async hops)
-- **M7 — Voice/video calling** (empty)
+- **M7 — Voice/video calling** (1 entry: signaling — addressed, cross-process, first answer wins)
 - **M8 — Senior hardening** (empty)
 
 ---
@@ -608,5 +608,22 @@ Keep it as bullets, not essays.
 > Propagate a correlation id end to end: the gateway mints it, every HTTP hop forwards it, events and tasks carry it in payloads/headers, every service logs it. Distributed tracing (OpenTelemetry) adds timing spans on the same propagation.
 
 **Trap answer to avoid:** *"Microservices means splitting the code into more containers"*: without owned data, idempotent messaging, deadlines and correlation, you get a distributed monolith with more ways to fail.
+
+## M7 — Voice & video calling (WebRTC)
+
+### `2026-09-29 · M7` — signaling server: blind broadcast relay → addressed, cross-process, first-answer-wins
+
+- **What we did:** `WS /api/v1/ws/appointments/{id}/call` (`app/api/routes/call.py`) carries WebRTC signaling (SDP offer/answer, ICE candidates, hangup) between the appointment's doctor and patient; media then flows peer-to-peer. Observed with **real WebRTC peers** (`aiortc` 1.15, `requirements-dev.txt`) in `scripts/observe_call.py`: the doctor opens a data channel and sends an offer, the patient answers, "connected" = ping/pong over the data channel; two API processes (:8001/:8002). **Naive:** in-process room, every frame relayed to everyone including the sender, no identity. **Fix:** the server stamps `from`/`from_device` and always addresses the other participant (`to`); frames fan out via a generalized `ChatHub` (`call_hub`, per-socket user+device, `to`/`exclude_device` filtering); for multiple devices, the first `answer` claims the call with Redis `SET call:{id}:{call_id}:answered_by NX EX 120`, later answers get `ALREADY_ANSWERED`, the callee's other devices get `answered_elsewhere`.
+- **Observed (naive):** same process: connected, but the caller got its **own offer echoed** (`InvalidStateError on offer`) and the callee its own answer. Cross-process: **not connected** (offer never reached :8002). Two devices: only the same-process device saw the offer; the double answer was **masked** by the routing bug.
+- **Observed (fix step 1, addressing + pub/sub):** same- and cross-process connected with **0 errors**; two devices: **both answered** and the caller hit `InvalidStateError on answer`, the masked bug surfacing once routing worked.
+- **Observed (fix step 2, claim):** two devices: connected to **exactly one** device, the other got `ALREADY_ANSWERED`, caller errors **0**. Chat regression (shared hub): 10/10 same- and cross-process, outsider 1008.
+- **Lesson 1 — signaling is addressed messaging, not broadcast:** WebRTC's offer/answer is a state machine per peer connection; an echoed offer or a second answer is a protocol violation (`InvalidStateError`). The server must know who sent a frame and who it's for.
+- **Lesson 2 — fixing one bug can reveal the next:** the two-device double answer existed from the start but couldn't happen while cross-process delivery was broken. Re-run every scenario after each fix, not just the one you fixed.
+- **Lesson 3 — "who answers" is a distributed race:** devices sit on different API processes, so the claim needs an atomic cross-process primitive (Redis `SET NX`), same idea as single-flight and saga claims.
+- **Scope honesty:** aiortc peers on one machine connect over host candidates, so STUN/TURN (NAT traversal) isn't exercised here; ICE candidates travel inside the SDP (aiortc gathers before creating the description), so trickle ICE isn't exercised either.
+- **Interview answer:** *"WebRTC needs a signaling channel to exchange SDP offers, answers and ICE candidates before peers can connect; media then goes peer-to-peer, or through TURN when NAT blocks it. I run signaling over an authenticated WebSocket, but as addressed messages: the server stamps the sender, routes to the other participant only, and fans out across server instances through pub/sub. When a user has several devices, the first answer atomically claims the call and the other devices are told it was answered elsewhere."*
+- **Trap to avoid:** *"The signaling server just relays everything to the room"*: it echoes offers back to the caller and lets several devices answer the same call.
+
+---
 
 > Appends: each of the six topics will get its own section below as we reach it. All future entries should maintain this format so the file stays grep-able.
