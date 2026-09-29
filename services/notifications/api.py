@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import CardicheckError, register_exception_handlers
+from app.core.request_id import install_request_id
 from app.core.security import decode_access_token
 from app.schemas.envelope import ApiResponse
 from services.notifications.db import get_session
@@ -16,6 +17,7 @@ from services.notifications.schemas import NotificationResponse
 
 app = FastAPI(title="notifications-service")
 register_exception_handlers(app)
+install_request_id(app, "notifications")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
