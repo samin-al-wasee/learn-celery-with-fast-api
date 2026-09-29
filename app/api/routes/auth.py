@@ -1,12 +1,14 @@
 import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.core.config import get_settings
 from app.core.database import get_db_session
 from app.core.errors import CardicheckError
+from app.core.rate_limit import record_failure, retry_after
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import User
 from app.schemas.auth import LoginRequest, SignupRequest, SignupResponse, TokenResponse
@@ -55,8 +57,20 @@ async def signup(
 @router.post("/login", response_model=ApiResponse[TokenResponse])
 async def login(
     payload: LoginRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ) -> ApiResponse[TokenResponse]:
+    key = f"{request.client.host if request.client else '-'}:{str(payload.email).lower()}"
+    # M8: check the limit BEFORE the DB lookup and the ~30ms argon2 verify.
+    settings = get_settings()
+    retry = await retry_after("login", key, settings.login_max_failures)
+    if retry is not None:
+        raise CardicheckError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="TOO_MANY_ATTEMPTS",
+            message="too many failed logins, try again later",
+            headers={"Retry-After": str(retry)},
+        )
     # argon2 is deliberately CPU-slow (~30ms per verify); running it on the
     # event loop stalls every concurrent request. Delegate to the threadpool.
     user = (
@@ -66,6 +80,7 @@ async def login(
         verify_password, payload.password, user.hashed_password
     )
     if not ok:
+        await record_failure("login", key, settings.login_window_seconds)
         raise CardicheckError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="INVALID_CREDENTIALS",

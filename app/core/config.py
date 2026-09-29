@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     gateway_monolith_url: str = "http://127.0.0.1:8000"
     gateway_notifications_url: str = "http://127.0.0.1:8300"
 
+    # M8: login throttling (failed attempts per client IP + email per window).
+    login_max_failures: int = 5
+    login_window_seconds: int = 60
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
