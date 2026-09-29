@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     deposit_resume_after_seconds: float = 30.0
     deposit_sweep_seconds: float = 30.0
 
+    # M6: API gateway upstreams.
+    gateway_monolith_url: str = "http://127.0.0.1:8000"
+    gateway_notifications_url: str = "http://127.0.0.1:8300"
+
     # M3: fake SMTP used by the welcome-email job.
     email_send_seconds: float = 2.0
     email_fail_rate: float = 0.0
