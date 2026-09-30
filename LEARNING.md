@@ -31,7 +31,7 @@ Keep it as bullets, not essays.
 - **M5 — RabbitMQ deep dive** (complete; 5 entries + interview file: auto-ack/unbounded prefetch → manual ack + prefetch + DLX; publisher confirms + mandatory + persistent, topic routing; backpressure: max-length policy + blocked timeout; inbox idempotent consumer; Celery-vs-raw map)
 - **M6 — Microservices / distributed systems** (complete; 6 entries + interview file: transactional outbox + relay; sync call timeout/release/degrade/breaker; deposit saga with compensation; service owns its data; API gateway + request ids; correlation across async hops)
 - **M7 — Voice/video calling** (complete; 2 entries + interview file: signaling — addressed, cross-process, first answer wins; mesh vs SFU measured)
-- **M8 — Senior hardening** (1 entry: login throttling shared across processes)
+- **M8 — Senior hardening** (2 entries: login throttling shared across processes; cross-process stampede lock)
 
 ---
 
@@ -679,6 +679,19 @@ Keep it as bullets, not essays.
 - **Trade-offs (decided, not accidental):** *fail open* when Redis is down keeps login available but unthrottled (logged); a bank would fail closed. Keying on IP + email means an attacker can lock one user out from their own IP only, not globally, but distributed attacks from many IPs need an additional per-account (or global) limit plus CAPTCHA. The counters live in the `allkeys-lru` cache Redis, so heavy memory pressure could evict them: security state belongs on a non-evicting Redis (same conclusion as the Celery result backend in M2/M3).
 - **Interview answer:** *"I rate-limit logins with a counter in Redis that every API instance shares, incremented atomically with a TTL for the window, and I check it before doing the expensive password hash. A per-process counter looks fine on one worker but gives an attacker N times the attempts with N workers and resets on every deploy; we measured 10 attempts instead of 5 with two processes. Blocked requests get 429 with Retry-After, and I decide explicitly whether the limiter fails open or closed if Redis is down."*
 - **Trap to avoid:** *"Add a rate limit middleware with an in-memory store"*: it's per process. And don't key only on IP (NAT'd offices share one) or only on email (lets anyone lock any account out).
+
+### `2026-09-30 · M8` — cache stampede across processes: per-process single-flight → Redis lock with re-election + double-check
+
+- **What we did:** `scripts/observe_stampede_cluster.py`: 4 processes × 10 concurrent `read_through` misses on one key, released at the same wall-clock instant; the slow loader (0.3 s) counts calls in Redis. **Naive:** M2's single-flight (per process). **Fix** (`app/core/cache.py`, `app/core/redis.py`): the in-process leader takes `SET lock:{key} <token> NX PX CACHE_LOCK_TTL_MS`; other processes poll the cache and keep trying to take the lock (re-election if the leader dies); whoever gets the lock **re-reads the cache first** (double-checked locking); release is a compare-and-delete Lua script so an expired leader can't delete a newer owner's lock; after 2× TTL a waiter loads anyway (no deadlock); Redis errors fail open.
+- **Observed (naive):** **4 loads** (1 per process) on both runs; single-flight only coalesced each process's own 10 misses.
+- **Observed (lock, first version):** 1 load in 3/3 runs. **Dead leader** (a lock planted that nobody releases): everyone waited the full TTL (5.4 s) and then **all 4 loaded**: the stampede returned in exactly the failure case.
+- **Observed (+ re-election):** dead leader → **1 load** after 5.0 s. But one normal run gave **2 loads**: a waiter read the cache (miss), the leader then filled it and released the lock, and the waiter acquired the free lock and loaded again.
+- **Observed (+ double-check after acquiring):** 8 runs → loads per run: **1, 1, 1, 1, 1, 1, 1, 1**; dead leader: **1 load after 4.8 s**. Regression: in-process single-flight 20 → 1; TTL jitter unchanged.
+- **Lesson 1 — coordination must match the scope of the problem:** in-process single-flight is necessary (it saves Redis round-trips) but not sufficient once there are several processes; the cluster needs shared state.
+- **Lesson 2 — every distributed lock needs three things:** a TTL (a dead holder can't block forever), an owner token with compare-and-delete release (never delete someone else's lock), and a plan for waiters when the holder dies (re-election, then a bounded fallback).
+- **Lesson 3 — check, lock, check again:** acquiring a lock only means "nobody else is loading *now*"; the value may have arrived a moment ago. Double-checked locking closed a 2-loads race that only showed up in some runs; run concurrency tests many times, one green run proves little.
+- **Interview answer:** *"Single-flight stops a stampede inside one process, but with several instances each still hits the database. I add a Redis lock around the refill: SET NX with a TTL and a random token, released with a compare-and-delete script. Other instances poll the cache and try to take over the lock if the holder dies, and whoever gets the lock re-checks the cache before loading. The lock's TTL has to outlive a normal load; if it doesn't, you get two loaders, which is wasteful but still correct."*
+- **Trap to avoid:** *"SET NX then DEL when done"*: without a TTL a crash deadlocks the key, without a token check you can release someone else's lock, and without re-election the failure case stampedes anyway.
 
 ---
 
