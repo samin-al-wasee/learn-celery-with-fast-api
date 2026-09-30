@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 60
     # M2: +-fraction of random TTL spread so keys filled together don't expire together.
     cache_ttl_jitter: float = 0.1
+    # M8: cross-process stampede lock; must outlive a normal loader call.
+    cache_lock_ttl_ms: int = 5000
 
     # M3: Celery broker (RabbitMQ).
     celery_broker_url: str = "amqp://cardicheck:cardicheck@localhost:5672//"

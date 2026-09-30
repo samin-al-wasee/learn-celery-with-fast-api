@@ -54,3 +54,26 @@ async def cache_delete(key: str) -> None:
         await run_in_threadpool(redis_client.delete, key)
     except redis.RedisError as exc:
         logger.error("cache invalidation failed key=%s: %s", key, type(exc).__name__)
+
+
+# M8: release only if we still own the lock; a plain DEL could delete another process's lock
+# after ours expired mid-load.
+_RELEASE = redis_client.register_script(
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+)
+
+
+async def acquire_lock(name: str, token: str, ttl_ms: int) -> bool:
+    try:
+        return bool(await run_in_threadpool(redis_client.set, name, token, nx=True, px=ttl_ms))
+    except redis.RedisError as exc:
+        # M8: fail open like the rest of the cache: without Redis, just load locally.
+        logger.warning("cache lock skipped name=%s: %s", name, type(exc).__name__)
+        return True
+
+
+async def release_lock(name: str, token: str) -> None:
+    try:
+        await run_in_threadpool(_RELEASE, keys=[name], args=[token])
+    except redis.RedisError as exc:
+        logger.warning("cache unlock failed name=%s: %s", name, type(exc).__name__)
